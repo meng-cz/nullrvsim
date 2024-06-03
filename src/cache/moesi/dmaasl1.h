@@ -60,7 +60,6 @@ protected:
     std::list<DMARequest> arrival_reqs;
     std::list<DMARequest> dma_req_queue;
 
-    std::allocator<ProcessingDMAReq> req_alloc;
     ProcessingDMAReq *current = nullptr;
     std::unordered_map<LineIndexT, ProcessingDMAReq*> wait_lines;
 

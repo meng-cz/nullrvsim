@@ -7,9 +7,23 @@
 
 namespace simbus {
 
-typedef uint16_t BusPortT;
+typedef uint32_t BusPortT;
+typedef uint32_t ChannelT;
 
 using simcache::CacheCohenrenceMsg;
+
+class BusInterfaceV2 {
+public:
+    virtual uint32_t get_port_num() = 0;
+    virtual uint32_t get_channel_num() = 0;
+
+    virtual bool can_send(BusPortT port, ChannelT channel) = 0;
+    virtual bool send(BusPortT port, BusPortT dst_port, ChannelT channel, CacheCohenrenceMsg msg) = 0;
+
+    virtual bool can_recv(BusPortT port, ChannelT channel) = 0;
+    virtual bool recv(BusPortT port, ChannelT channel, CacheCohenrenceMsg *msg_buf) = 0;
+
+};
 
 class BusInterface {
 public:

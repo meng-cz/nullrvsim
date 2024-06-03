@@ -122,7 +122,6 @@ protected:
     const uint32_t SWFLAG_WAIT      = (1 << 2); // 该进程由于等待被换出,不可被立即换回
     void insert_ready_thread_nolock(RVThread *thread, uint32_t prefered_cpu);
 
-    std::allocator<RVThread> alloc_thread;
     uint64_t alloc_current_tid = 0;
     inline uint64_t alloc_tid() {
         return alloc_current_tid++;

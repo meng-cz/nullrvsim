@@ -3,14 +3,16 @@
 
 #include "common.h"
 #include "simerror.h"
+#include "tickqueue.h"
 
-#include "coherence.h"
+#include "cpu/amo.h"
 
 namespace simcache {
 
 typedef struct {
     LineIndexT  lindex;
     bool        readonly;
+    std::array<uint8_t, CACHE_LINE_LEN_BYTE> data;
 } ArrivalLine;
 
 class CacheInterface : public SimObject {
@@ -50,6 +52,60 @@ public:
     /// @return Count
     virtual uint32_t arrival_line(vector<ArrivalLine> *out) = 0;
 };
+
+enum class CacheOPCode {
+    load = 0,
+    store,
+    amo
+};
+
+typedef struct {
+    CacheOPCode     opcode = CacheOPCode::load;
+    void*           param = nullptr;
+    PhysAddrT       addr = 0;
+    uint32_t        len = 0;
+    isa::RV64AMOOP5 amo;
+    SimError        err = SimError::success;
+    vector<uint8_t> data;
+    vector<bool>    valid;
+} CacheOP;
+
+
+class CacheInterfaceV2 : public SimObject {
+public:
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   ld_input;
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   ld_output;
+
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   st_input;
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   st_output;
+
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   amo_input;
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   amo_output;
+
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   misc_input;
+    /// @brief 
+    unique_ptr<SimpleTickQueue<CacheOP*>>   misc_output;
+
+    std::vector<ArrivalLine>    arrivals;
+
+    virtual void clear_ld(std::list<CacheOP*> *to_free) = 0;
+    virtual void clear_st(std::list<CacheOP*> *to_free) = 0;
+    virtual void clear_amo(std::list<CacheOP*> *to_free) = 0;
+    virtual void clear_misc(std::list<CacheOP*> *to_free) = 0;
+
+    /// @brief 
+    /// @return 
+    virtual bool is_empty() = 0;
+
+};
+
 
 }
 

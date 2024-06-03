@@ -4,6 +4,7 @@
 #include "common.h"
 
 #include "cacheinterface.h"
+#include "coherence.h"
 
 namespace simcache {
 

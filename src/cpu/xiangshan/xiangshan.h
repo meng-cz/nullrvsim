@@ -24,7 +24,7 @@ class XiangShanCPU : public CPUInterface {
 public:
 
     XiangShanCPU(
-        CacheInterface *icache_port, CacheInterface *dcache_port, CPUSystemInterface *sys_port,
+        CacheInterface *icache_port, CacheInterfaceV2 *dcache_port, CPUSystemInterface *sys_port,
         uint32_t id
     );
 
@@ -45,11 +45,9 @@ protected:
     uint32_t cpu_id;
 
     CacheInterface *io_icache_port;
-    CacheInterface *io_dcache_port;
+    CacheInterfaceV2 *io_dcache_port;
     CPUSystemInterface *io_sys_port;
 
-    std::allocator<FTQEntry> alloc_ftq;
-    std::allocator<XSInst> alloc_inst;
     XSInstID current_inst_id = 0;
 
     struct {
@@ -259,7 +257,7 @@ protected:
         IntFPEXU(uint32_t rsport, uint32_t rscnt, uint32_t unitcnt, string name) : rs(rsport, rscnt), name(name) {
             opunit.resize(unitcnt);
         }
-        TickList<XSInst*>   rs;
+        LimitedTickList<XSInst*>   rs;
         vector<OperatingInst> opunit;
         string name;
         inline void apply_next_tick() {
@@ -285,11 +283,11 @@ protected:
     */
     void _cur_intfp_exu(IntFPEXU *exu);
 
-    unique_ptr<TickList<XSInst*>> rs_ld;
-    unique_ptr<TickList<XSInst*>> rs_sta;
-    unique_ptr<TickList<XSInst*>> rs_std;
-    unique_ptr<TickList<XSInst*>> rs_amo;
-    unique_ptr<TickList<XSInst*>> rs_fence;
+    unique_ptr<LimitedTickList<XSInst*>> rs_ld;
+    unique_ptr<LimitedTickList<XSInst*>> rs_sta;
+    unique_ptr<LimitedTickList<XSInst*>> rs_std;
+    unique_ptr<LimitedTickList<XSInst*>> rs_amo;
+    unique_ptr<LimitedTickList<XSInst*>> rs_fence;
     LSUPort lsu_port;
     unique_ptr<LSU> lsu;
     void cur_mem_disp2();

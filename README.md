@@ -11,12 +11,12 @@ A Cycle-Driven RISC-V (RV64GC) User-Mode Simulator for Learning Computer Archite
 - 只模拟用户态指令，ecall由模拟器代理到主机执行
 - 多线程加速模拟 *（还没优化，现在最好还是单线程跑）*
 
-## 内容
+## 目前的内容
 
 CPU核心：
 
 - 简单的五级流水线核心
-- 按照香山三期CPU流水线实现的乱序核心 *（还在测试）*
+- 仿照香山三期CPU流水线实现的乱序核心 *（还在测试）*
 
 Cache与总线：
 
@@ -37,7 +37,7 @@ Cache与总线：
 
 ### 依赖：
 
-- 我用的Linux内核版本：**5.15.0** *（不同的内核版本可能导致主机系统调用接口不同，详细的版本支持信息还需测试）*
+- 我用的Linux内核版本：**5.15.\*** *（不同的内核版本可能导致主机系统调用接口不同，详细的版本支持信息还需测试）*
 - 编译工具与内核头文件: **gcc, g++, cmake, linux-headers**
 - RV交叉编译工具：**riscv64-linux-gnu-gcc**
 
@@ -61,11 +61,21 @@ make -j16
 
 ## 运行
 
-#### 命令行参数
+### 命令行参数
 
+```bash
+./nullrvsim operation [-c configs] [-w workload argvs]
+```
 
+**operation:** 运行项目，目前只有mp_moesi_l1l2这一项，启动src/launch/l1l2.cpp中的内容。其他测试项详见main.cpp。
 
-#### 配置模拟CPU核心数
+**-c (可选):** 配置文件ini的路径，默认为../conf/default.ini。
+
+**-w :** Workload的ELF文件路径与argv。-w后的所有内容都会作为argv传给模拟程序，其他参数必须在-w之前。
+
+暂时不支持修改模拟进程的环境变量与Aux-Vec。
+
+### 配置模拟CPU核心数
 
 修改conf/default.ini：
 
@@ -75,49 +85,45 @@ cpu_number = 4
 mem_size_mb = 256
 ```
 
-#### 运行单线程程序测试：
+### 运行单线程程序测试：
 
+运行example中静态链接的rv64gc elf文件：
 ```bash
 # pwd : .../build
 ./nullrvsim mp_moesi_l1l2 -w example/helloworld.riscv
-./nullrvsim mp_moesi_l1l2 -w example/vecadd1core.riscv 2048 example/i2048-a.txt example/i2048-b.txt example/i2048-asumb.txt
 ```
 
-#### 运行pthread多线程程序测试：
-
-```bash
-# pwd : .../build
-./nullrvsim mp_moesi_l1l2 -w example/vecaddpt.riscv 4 2048 example/i2048-a.txt example/i2048-b.txt example/i2048-asumb.txt
-```
-
-#### 运行动态链接的elf程序测试：
+运行动态链接的elf文件：
 
 修改conf/default.ini，将ldpath设置为ld-linux-riscv64-lp64d.so.1所在目录：
 ```ini
 [workload]
 ld_path = /usr/riscv64-linux-gnu/lib
 ```
-
+使用默认选项gcc交叉编译：
 ```bash
 # pwd : .../build
 riscv64-linux-gnu-gcc ../example/helloworld.c -o helloworld.dyn.riscv
 ./nullrvsim mp_moesi_l1l2 -w helloworld.dyn.riscv
 ```
 
-#### 单元测试：
-
-完整单元测试列表看src/main.cpp
-
-- 运行四L1单L2的顺序写读两遍测试：
+### 运行pthread多线程程序测试：
 
 ```bash
 # pwd : .../build
-./nullrvsim test_cache_seq
+./nullrvsim mp_moesi_l1l2 -w example/vecaddpt.riscv 4 2048 example/i2048-a.txt example/i2048-b.txt example/i2048-asumb.txt
 ```
 
-- 运行四L1单L2的随机读写测试：
+## 感谢
 
-```bash
-# pwd : .../build
-./nullrvsim test_cache_rand
-```
+使用/包含的项目：
+- Easylogging++: [abumq/easyloggingpp](https://github.com/abumq/easyloggingpp)
+- ELFIO: [serge1/ELFIO](https://github.com/serge1/ELFIO)
+
+参考的项目：
+- 香山开源CPU: [OpenXiangShan/XiangShan](https://github.com/OpenXiangShan/XiangShan), [XiangShan官方文档](https://xiangshan-doc.readthedocs.io/zh-cn/latest/)
+- BOOM: [riscv-boom/riscv-boom](https://github.com/riscv-boom/riscv-boom), [RISCV-BOOM's Documentation](https://docs.boom-core.org/en/latest/)
+
+
+
+

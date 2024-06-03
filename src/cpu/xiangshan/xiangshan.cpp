@@ -11,7 +11,7 @@ namespace simcpu {
 namespace xs {
 
 XiangShanCPU::XiangShanCPU(
-    CacheInterface *icache_port, CacheInterface *dcache_port, CPUSystemInterface *sys_port,
+    CacheInterface *icache_port, CacheInterfaceV2 *dcache_port, CPUSystemInterface *sys_port,
     uint32_t id
 ) : cpu_id(id), io_icache_port(icache_port), io_dcache_port(dcache_port), io_sys_port(sys_port)
 {
@@ -77,7 +77,7 @@ XiangShanCPU::XiangShanCPU(
     pdec_result_queue = make_unique<SimpleTickQueue<FTQEntry*>>(1, 1, 0);
     inst_buffer = make_unique<SimpleTickQueue<XSInst*>>(1 + param.fetch_width_bytes / 2, cpu_width, param.inst_buffer_size);
     
-    bpu = make_unique<BPU>(&param, &alloc_ftq, &ftq, 0);
+    bpu = make_unique<BPU>(&param, &ftq, 0);
     bpu->debug_ofile = debug_bpu_ofile;
 
     dec_to_rnm = make_unique<SimpleTickQueue<XSInst*>>(cpu_width, cpu_width, 0);
@@ -105,11 +105,11 @@ XiangShanCPU::XiangShanCPU(
     fmac2 = make_unique<IntFPEXU>(2, param.fp_rs_size * 2, 2, "FMAC2");
     fmisc = make_unique<IntFPEXU>(2, param.fp_rs_size * 2, 2, "FMISC");
 
-    rs_ld = make_unique<TickList<XSInst*>>(2, param.mem_rs_size * 2);
-    rs_sta = make_unique<TickList<XSInst*>>(2, param.mem_rs_size * 2);
-    rs_std = make_unique<TickList<XSInst*>>(2, param.mem_rs_size * 2);
-    rs_amo = make_unique<TickList<XSInst*>>(1, 1);
-    rs_fence = make_unique<TickList<XSInst*>>(1, 1);
+    rs_ld = make_unique<LimitedTickList<XSInst*>>(2, param.mem_rs_size * 2);
+    rs_sta = make_unique<LimitedTickList<XSInst*>>(2, param.mem_rs_size * 2);
+    rs_std = make_unique<LimitedTickList<XSInst*>>(2, param.mem_rs_size * 2);
+    rs_amo = make_unique<LimitedTickList<XSInst*>>(1, 1);
+    rs_fence = make_unique<LimitedTickList<XSInst*>>(1, 1);
 
     lsu_port.ld = rs_ld.get();
     lsu_port.sta = rs_sta.get();
@@ -328,8 +328,7 @@ void XiangShanCPU::_cur_pred_check() {
     uint16_t len = 0;
 
     for(int i = 0; i < insts.size(); i++) {
-        XSInst * xsinst = alloc_inst.allocate(1);
-        alloc_inst.construct(xsinst);
+        XSInst * xsinst = new XSInst();
         pdec_insts[i] = xsinst;
 
         xsinst->ftq = fetch;
@@ -404,8 +403,7 @@ void XiangShanCPU::_cur_pred_check() {
     bool brout = false;
     for(auto p : pdec_insts) {
         if(brout) {
-            alloc_inst.destroy(p);
-            alloc_inst.deallocate(p, 1);
+            delete p;
             continue;
         }
         simroot_assert(inst_buffer->push(p));
@@ -473,8 +471,7 @@ void XiangShanCPU::apl_bpu_redirect() {
     ftq_pos ++;
     std::advance(iter, 1);
     while(iter != ftq.end()) {
-        alloc_ftq.destroy(*iter);
-        alloc_ftq.deallocate(*iter, 1);
+        delete (*iter);
         iter = ftq.erase(iter);
     }
 
@@ -669,6 +666,10 @@ void XiangShanCPU::decdisp_on_current_tick() {
 
 void XiangShanCPU::cur_commit() {
     dead_loop_detact_tick++;
+    if(dead_loop_detact_tick == dead_loop_warn_tick) {
+        sprintf(log_buf, "CPU%d: %ld ticks without inst commited", cpu_id, dead_loop_warn_tick);
+        LOG(WARNING) << log_buf;
+    }
     for(int __n = 0; !rob.empty() && __n < param.decode_width; __n++) {
         XSInst *inst = rob.front();
         if(!inst->finished) return;
@@ -842,14 +843,12 @@ void XiangShanCPU::cur_commit() {
         }
 
         if(dealloc_inst) {
-            alloc_inst.destroy(inst);
-            alloc_inst.deallocate(inst, 1);
+            delete inst;
 
             fetch->commit_cnt++;
             if(fetch->commit_cnt >= fetch->insts.size()) {
                 // 整个Fetch全部被Commit
-                alloc_ftq.destroy(fetch);
-                alloc_ftq.deallocate(fetch, 1);
+                delete fetch;
                 ftq.pop_front();
                 simroot_assert(ftq_pos);
                 ftq_pos --;
@@ -883,10 +882,6 @@ void XiangShanCPU::cur_commit() {
     }
     #undef PERR
 
-    if(dead_loop_detact_tick == dead_loop_warn_tick) {
-        sprintf(log_buf, "CPU%d: %ld ticks without inst commited", cpu_id, dead_loop_warn_tick);
-        LOG(WARNING) << log_buf;
-    }
 }
 
 void XiangShanCPU::cur_int_disp2() {
@@ -1285,8 +1280,7 @@ void XiangShanCPU::_apl_general_cpu_redirect(XSInst *inst, VirtAddrT nextpc) {
         simroot::log_line(debug_pipeline_ofile, log_buf);
     }
 
-    alloc_inst.destroy(inst);
-    alloc_inst.deallocate(inst, 1);
+    delete inst;
 
     _apl_clear_pipeline();
 }
@@ -1391,12 +1385,10 @@ void XiangShanCPU::_apl_clear_pipeline() {
     lsu->apl_clear_pipeline();
 
     for(auto p : to_free_inst) {
-        alloc_inst.destroy(p);
-        alloc_inst.deallocate(p, 1);
+        delete p;
     }
     for(auto p : to_free_ftq) {
-        alloc_ftq.destroy(p);
-        alloc_ftq.deallocate(p, 1);
+        delete p;
     }
 }
 

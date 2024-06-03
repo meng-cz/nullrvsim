@@ -16,9 +16,9 @@ public:
  * 每周期最多向列表中写入input_width项，写入的项会在下一周期进入主列表
 */
 template <typename T>
-class TickList {
+class LimitedTickList {
 public:
-    TickList(uint32_t input_wid, uint32_t queue_size) {
+    LimitedTickList(uint32_t input_wid, uint32_t queue_size) {
         assert(input_wid > 0);
         assert(input_wid < (1<<30));
         iwid = input_wid;
@@ -66,6 +66,49 @@ protected:
     std::list<T> q;
 };
 
+/**
+ * 延迟1周期写入的列表结构，写入的项会在下一周期进入主列表
+*/
+template <typename T>
+class TickList {
+public:
+    inline bool push_next_tick(T &v) {
+        push_buf.push_back(v);
+        return true;
+    }
+    inline void apply_next_tick() {
+        q.splice(q.end(), push_buf);
+    }
+    /**
+     * 获取当前的主列表内容
+    */
+    inline std::list<T> &get() {return q;};
+    /**
+     * 元素总个数
+    */
+    inline uint64_t size() {return q.size() + push_buf.size();}
+    /**
+     * 主列表中的元素个数
+    */
+    inline uint64_t cur_size() {return q.size();}
+    inline bool empty() {return (q.empty() && push_buf.empty());}
+    inline T &front() {return q.front();}
+    inline void pop_front() {q.pop_front();}
+    inline void clear() {q.clear(); push_buf.clear();}
+    inline void clear(std::list<T> *to_free) {
+        if(to_free) {
+            to_free->splice(to_free->end(), q);
+            to_free->splice(to_free->end(), push_buf);
+        }
+        else {
+            clear();
+        }
+    }
+protected:
+    std::list<T> push_buf;
+    std::list<T> q;
+};
+
 template <typename K, typename T>
 class TickMap {
 public:
@@ -79,6 +122,7 @@ public:
         push_buf.emplace_back(k, v);
     }
     inline std::unordered_map<K,T> &get() {return m;}
+    inline bool empty() {return (m.empty() && push_buf.empty());}
     inline uint64_t size() {return m.size() + push_buf.size();}
     inline uint64_t cur_size() {return m.size();}
     inline void clear() {m.clear(); push_buf.clear();}
@@ -89,9 +133,7 @@ public:
             }
             to_free->splice(to_free->end(), push_buf);
         }
-        else {
-            clear();
-        }
+        clear();
     }
 protected:
     std::list<std::pair<K,T>> push_buf;
@@ -111,6 +153,7 @@ public:
         push_buf.emplace_back(k, v);
     }
     inline std::unordered_multimap<K,T> &get() {return m;}
+    inline bool empty() {return (m.empty() && push_buf.empty());}
     inline uint64_t size() {return m.size() + push_buf.size();}
     inline uint64_t cur_size() {return m.size();}
     inline void clear() {m.clear(); push_buf.clear();}
@@ -121,15 +164,44 @@ public:
             }
             to_free->splice(to_free->end(), push_buf);
         }
-        else {
-            clear();
-        }
+        clear();
     }
 protected:
     std::list<std::pair<K,T>> push_buf;
     std::unordered_multimap<K,T> m;
 };
 
+
+template <typename T>
+class TickSet {
+public:
+    inline void apply_next_tick() {
+        for(auto &entry : push_buf) {
+            s.emplace(entry);
+        }
+        push_buf.clear();
+    }
+    inline void push_next_tick(T &v) {
+        push_buf.emplace(v);
+    }
+    inline std::set<T> &get() {return s;}
+    inline bool empty() {return (s.empty() && push_buf.empty());}
+    inline uint64_t size() {return s.size() + push_buf.size();}
+    inline uint64_t cur_size() {return s.size();}
+    inline void clear() {s.clear(); push_buf.clear();}
+    inline void clear(std::list<T> *to_free) {
+        if(to_free) {
+            for(auto &entry : s) {
+                to_free->emplace_back(entry);
+            }
+            to_free->splice(to_free->end(), push_buf);
+        }
+        clear();
+    }
+protected:
+    std::set<T> push_buf;
+    std::set<T> s;
+};
 
 
 template <typename T>

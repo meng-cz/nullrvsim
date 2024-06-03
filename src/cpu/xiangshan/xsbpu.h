@@ -26,7 +26,7 @@ typedef struct {
 class BPU {
 public:
 
-    BPU(XiangShanParam *param, std::allocator<FTQEntry> *alloc, list<FTQEntry*> *ftq, VirtAddrT pc);
+    BPU(XiangShanParam *param, list<FTQEntry*> *ftq, VirtAddrT pc);
 
     void on_current_tick();
     void apply_next_tick();
@@ -49,7 +49,6 @@ public:
 protected:
 
     XiangShanParam *param;
-    std::allocator<FTQEntry> *alloc;
     list<FTQEntry*> *ftq;
 
     VirtAddrT pc;

@@ -46,9 +46,8 @@ void SimSystemMultiCore::init(SimWorkload &workload, std::vector<CPUInterface*> 
     syscall_memory_amo_lock.wait_interval = 32;
     log_bufs.assign(cpu_num, std::array<char, 256>());
 
-    RVThread *init_thread = alloc_thread.allocate(1);
     uint64_t entry = 0, sp = 0;
-    alloc_thread.construct(init_thread, workload, ppman, &entry, &sp);
+    RVThread *init_thread = new RVThread(workload, ppman, &entry, &sp);
     RVRegArray regs;
     isa::zero_regs(regs);
     regs[0] = entry;
@@ -67,8 +66,7 @@ bool SimSystemMultiCore::switch_next_thread_nolock(uint32_t cpuid, uint32_t flag
         for(auto t : cpu_devs[cpuid].exec_thread->childs) {
             t->parent = nullptr;
         }
-        alloc_thread.destroy(cpu_devs[cpuid].exec_thread);
-        alloc_thread.deallocate(cpu_devs[cpuid].exec_thread, 1);
+        delete cpu_devs[cpuid].exec_thread;
         cpu_devs[cpuid].exec_thread = nullptr;
         bool no_running_thread = (waiting_threads.empty());
         if(!ready_threads.empty()) {
@@ -912,9 +910,8 @@ MP_SYSCALL_DEFINE(1220, host_clone) {
 
     sch_lock.lock();
 
-    RVThread *newthread = alloc_thread.allocate(1);
     VirtAddrT ret = alloc_tid();
-    alloc_thread.construct(newthread, thread, ret, clone_flags);
+    RVThread *newthread = new RVThread(thread, ret, clone_flags);
     newthread->clear_child_tid = child_tidptr;
 
     RVRegArray newregs;

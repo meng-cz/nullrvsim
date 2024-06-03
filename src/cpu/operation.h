@@ -17,13 +17,6 @@ SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s
 
 SimError perform_fmadd_op(RV64OPCode opcode, RV64FPWidth2 fwid, RawDataT *out, FPDataT s1, FPDataT s2, FPDataT s3, uint64_t *p_fcsr);
 
-/**
- * s1: value currently stored in memory
- * s2: oprand
- * out: value to be stored in memory
-*/
-SimError perform_amo_op(RV64AMOParam param, IntDataT *out, IntDataT s1, IntDataT s2);
-
 };
 
 namespace test {

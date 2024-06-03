@@ -89,8 +89,7 @@ void DMAL1MoesiDirNoi::handle_recv_msg(CacheCohenrenceMsg &msgbuf) {
         tofree->line_wait_finish.erase(lindex);
         if(tofree->line_todo.empty() && tofree->line_wait_finish.empty()) {
             if(tofree->req.callbackid) handler->dma_complete_callback(tofree->req.callbackid);
-            req_alloc.destroy(tofree);
-            req_alloc.deallocate(tofree, 1);
+            delete tofree;
         }
     }
 
@@ -142,8 +141,7 @@ void DMAL1MoesiDirNoi::on_current_tick() {
     }
 
     if(current == nullptr && !dma_req_queue.empty()) {
-        current = req_alloc.allocate(1);
-        req_alloc.construct(current, dma_req_queue.front());
+        current = new ProcessingDMAReq(dma_req_queue.front());
         dma_req_queue.pop_front();
         for(VirtAddrT va = addr_to_line_addr(current->req.vaddr); va < current->req.vaddr + current->req.size; va += CACHE_LINE_LEN_BYTE) {
             current->line_todo.push_back(current->req.dma_va_to_pa(va) >> CACHE_LINE_ADDR_OFFSET);

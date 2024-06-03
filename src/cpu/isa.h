@@ -3,6 +3,8 @@
 
 #include "common.h"
 
+#include "amo.h"
+
 typedef uint32_t RVInstT;
 typedef uint16_t RVCInstT;
 
@@ -97,17 +99,6 @@ enum class RV64OPCode {
     nop     = 0
 };
 
-enum class RV64LSWidth {
-    byte    = 0,
-    harf    = 1,
-    word    = 2,
-    dword   = 3,
-    ubyte   = 4,
-    uharf   = 5,
-    uword   = 6,
-    qword   = 8,
-};
-
 inline uint32_t rv64_ls_width_to_length(RV64LSWidth wid) {
     switch (wid)
     {
@@ -156,25 +147,6 @@ inline bool rv64_intop_is_mul(RV64IntOP73 op) {
     (op == RV64IntOP73::REM) || (op == RV64IntOP73::REMU)
     );
 }
-
-enum class RV64AMOOP5 {
-    ADD     = 0x00,
-    SWAP    = 0x01,
-    LR      = 0x02,
-    SC      = 0x03,
-    XOR     = 0x04,
-    AND     = 0x0c,
-    OR      = 0x08,
-    MIN     = 0x10,
-    MAX     = 0x14,
-    MINU    = 0x18,
-    MAXU    = 0x1c
-};
-
-typedef struct {
-    RV64AMOOP5  op;
-    RV64LSWidth wid;
-} RV64AMOParam;
 
 enum class RV64FPOP5 {
     ADD     = 0x00,

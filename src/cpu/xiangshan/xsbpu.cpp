@@ -42,8 +42,8 @@ inline uint64_t ubtb_idx(VirtAddrT startpc) {
     return ((startpc >> 1) & ((1UL << ubtb_tag_len) - 1UL));
 }
 
-BPU::BPU(XiangShanParam *param, std::allocator<FTQEntry> *alloc, list<FTQEntry*> *ftq, VirtAddrT pc)
-: param(param), alloc(alloc), ftq(ftq), pc(pc)
+BPU::BPU(XiangShanParam *param, list<FTQEntry*> *ftq, VirtAddrT pc)
+: param(param), ftq(ftq), pc(pc)
 {
     p1_to_p2 = make_unique<SimpleTickQueue<VirtAddrT>>(1, 1, 0);
     p2_to_p3 = make_unique<SimpleTickQueue<FTQEntry*>>(1, 1, 0);
@@ -126,8 +126,7 @@ void BPU::on_current_tick() {
                 sprintf(log_buf, "%ld:P3: Redirect to 0x%lx", simroot::get_current_tick(), p3_expected_pc.data);
                 simroot::log_line(debug_ofile, log_buf);
             }
-            alloc->destroy(fetch);
-            alloc->deallocate(fetch, 1);
+            delete fetch;
         }
         else {
             ftq->push_back(fetch);
@@ -199,8 +198,7 @@ void BPU::apl_redirect(VirtAddrT pc) {
     p1_to_p2->clear();
     p2_to_p3->clear(&tofree);
     for(auto p : tofree) {
-        alloc->destroy(p);
-        alloc->deallocate(p, 1);
+        delete p;
     }
     p3_expected_pc.valid = false;
 }
@@ -227,8 +225,7 @@ void BPU::do_pred() {
 
     VirtAddrT pc = p1_to_p2->top();
     p1_to_p2->pop();
-    FTQEntry * fetch = alloc->allocate(1);
-    alloc->construct(fetch);
+    FTQEntry * fetch = new FTQEntry();
     fetch->startpc = pc;
     simroot_assert(p2_to_p3->push(fetch));
 

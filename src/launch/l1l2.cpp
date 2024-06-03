@@ -5,6 +5,7 @@
 #include "cpu/pipeline5/pipeline5.h"
 
 #include "cache/moesi/l1cache.h"
+#include "cache/moesi/l1cachev2.h"
 #include "cache/moesi/lastlevelcache.h"
 #include "cache/moesi/dmaasl1.h"
 
@@ -22,6 +23,7 @@ using simcpu::cpup5::PipeLine5CPU;
 using simcpu::xs::XiangShanCPU;
 
 using simcache::moesi::L1CacheMoesiDirNoi;
+using simcache::moesi::L1CacheMoesiDirNoiV2;
 using simcache::moesi::LLCMoesiDirNoi;
 using simcache::moesi::DMAL1MoesiDirNoi;
 
@@ -180,40 +182,60 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     std::unique_ptr<SimSystemMultiCore> simsys = std::make_unique<SimSystemMultiCore>();
 
     std::vector<std::unique_ptr<L1CacheMoesiDirNoi>> l1ds;
+    std::vector<std::unique_ptr<L1CacheMoesiDirNoiV2>> l1dsv2;
     std::vector<std::unique_ptr<L1CacheMoesiDirNoi>> l1is;
-    char namebuf[64];
-    for(uint32_t i = 0; i < param.cpu_num; i++) {
-        assert(busmap.get_downlink_port(i*2, &busport));
-        sprintf(namebuf, "l1dcache%d", i);
-        l1ds.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoi>(
-            conf::get_int("l1cache", "dcache_set_offset", 5),
-            conf::get_int("l1cache", "dcache_way_count", 8),
-            conf::get_int("l1cache", "dcache_mshr_num", 6),
-            bus.get(), busport, &busmap, namebuf
-        )));
-        assert(busmap.get_downlink_port(i*2 + 1, &busport));
-        sprintf(namebuf, "l1icache%d", i);
-        l1is.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoi>(
-            conf::get_int("l1cache", "icache_set_offset", 4),
-            conf::get_int("l1cache", "icache_way_count", 8),
-            conf::get_int("l1cache", "icache_mshr_num", 4),
-            bus.get(), busport, &busmap, namebuf
-        )));
-    }
-
     std::vector<CPUInterface*> cpu_ptrs;
     cpu_ptrs.assign(param.cpu_num, nullptr);
 
     string cpu_type = conf::get_str("sys", "cpu_type", "pipeline5");
+    char namebuf[64];
 
     if(cpu_type.compare("pipeline5") == 0) {
+        for(uint32_t i = 0; i < param.cpu_num; i++) {
+            assert(busmap.get_downlink_port(i*2, &busport));
+            sprintf(namebuf, "l1dcache%d", i);
+            l1ds.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoi>(
+                conf::get_int("l1cache", "dcache_set_offset", 5),
+                conf::get_int("l1cache", "dcache_way_count", 8),
+                conf::get_int("l1cache", "dcache_mshr_num", 6),
+                bus.get(), busport, &busmap, namebuf
+            )));
+            assert(busmap.get_downlink_port(i*2 + 1, &busport));
+            sprintf(namebuf, "l1icache%d", i);
+            l1is.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoi>(
+                conf::get_int("l1cache", "icache_set_offset", 4),
+                conf::get_int("l1cache", "icache_way_count", 8),
+                conf::get_int("l1cache", "icache_mshr_num", 4),
+                bus.get(), busport, &busmap, namebuf
+            )));
+        }
         for(uint32_t i = 0; i < param.cpu_num; i++) {
             cpu_ptrs[i] = new PipeLine5CPU(l1is[i].get(), l1ds[i].get(), simsys.get(), i);
         }
     }
     else if(cpu_type.compare("xiangshan") == 0) {
         for(uint32_t i = 0; i < param.cpu_num; i++) {
-            cpu_ptrs[i] = new XiangShanCPU(l1is[i].get(), l1ds[i].get(), simsys.get(), i);
+            assert(busmap.get_downlink_port(i*2, &busport));
+            sprintf(namebuf, "l1dcache%d", i);
+            l1dsv2.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoiV2>(
+                conf::get_int("l1cache", "dcache_set_offset", 5),
+                conf::get_int("l1cache", "dcache_way_count", 8),
+                conf::get_int("l1cache", "dcache_mshr_num", 6),
+                std::max<uint32_t>(conf::get_int("l1cache", "dcache_index_latency", 2), 2) - 2,
+                1,
+                bus.get(), busport, &busmap, namebuf
+            )));
+            assert(busmap.get_downlink_port(i*2 + 1, &busport));
+            sprintf(namebuf, "l1icache%d", i);
+            l1is.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoi>(
+                conf::get_int("l1cache", "icache_set_offset", 4),
+                conf::get_int("l1cache", "icache_way_count", 8),
+                conf::get_int("l1cache", "icache_mshr_num", 4),
+                bus.get(), busport, &busmap, namebuf
+            )));
+        }
+        for(uint32_t i = 0; i < param.cpu_num; i++) {
+            cpu_ptrs[i] = new XiangShanCPU(l1is[i].get(), l1dsv2[i].get(), simsys.get(), i);
         }
     }
     else {
