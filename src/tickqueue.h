@@ -275,6 +275,13 @@ public:
         return (q.size() + pop_buf.size());
     }
 
+    inline void dbg_get_all(std::vector<T> *out) {
+        out->reserve(push_buf.size() + q.size() + pop_buf.size());
+        for(auto &e : push_buf) out->emplace_back(e);
+        for(auto &e : q) out->emplace_back(e);
+        for(auto &e : pop_buf) out->emplace_back(e);
+    }
+
 protected:
     uint32_t iwid, owid, qsize;
     std::list<T> push_buf;

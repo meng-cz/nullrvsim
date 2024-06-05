@@ -42,6 +42,62 @@ inline uint64_t ubtb_idx(VirtAddrT startpc) {
     return ((startpc >> 1) & ((1UL << ubtb_tag_len) - 1UL));
 }
 
+void BPU::dump_core(std::ofstream &ofile) {
+    #define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__); ofile << log_buf;}while(0)
+    LOGTOFILE("#BPU-S0-PC: 0x%ld\n", pc);
+    {
+        vector<VirtAddrT> tmp;
+        p1_to_p2->dbg_get_all(&tmp);
+        LOGTOFILE("#BPU-S1-S2: ");
+        for(auto pc : tmp) LOGTOFILE("0x%lx ", pc);
+        LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        vector<FTQEntry*> tmp;
+        p2_to_p3->dbg_get_all(&tmp);
+        LOGTOFILE("#BPU-S2-S3: ");
+        for(auto p : tmp) LOGTOFILE("0x%lx-0x%lx %ldinsts %ldbr %djmp 0x%lx | ", p->startpc, p->endpc, p->insts.size(), p->branchs.size(), (int)(p->jmpinfo), p->jmptarget);
+        LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#BPU-FTB:\n");
+        for(uint32_t s = 0; s < ftb->set_count; s++) {
+            LOGTOFILE("set %d: ", s);
+            for(auto &e : ftb->p_sets[s]) {
+                FTBEntry &f = e.second;
+                LOGTOFILE("0x%lx:len%d %ldbr(%d) %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), f.always_taken, (int)(f.jmpinfo), (f.jmptarget.valid)?(f.jmptarget.data):0);
+            }
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#BPU-uBTB:\n");
+        for(uint32_t s = 0; s < ubtb->set_count; s++) {
+            LOGTOFILE("set %d: ", s);
+            for(auto &e : ubtb->p_sets[s]) {
+                FTBEntry &f = e.second;
+                LOGTOFILE("0x%lx:len%d %ldbr %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), (int)(f.jmpinfo), (f.jmptarget.valid)?(f.jmptarget.data):0);
+            }
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#BPU-BHR: ");
+        uint64_t tmp = bhr.get(64, 64);
+        for(uint64_t i = 0; i < 64; i++) {
+            if(1 & (tmp >> i)) LOGTOFILE("1");
+            else LOGTOFILE("0");
+        }
+        LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    #undef LOGTOFILE
+}
+
 BPU::BPU(XiangShanParam *param, list<FTQEntry*> *ftq, VirtAddrT pc)
 : param(param), ftq(ftq), pc(pc)
 {

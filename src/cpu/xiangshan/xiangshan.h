@@ -337,7 +337,21 @@ protected:
     simroot::LogFileT log_inst_ofile = nullptr;
     char log_buf[512];
 
-    unique_ptr<XiangShanStatistic> statistic;
+    struct {
+        uint64_t total_tick_cnt = 0;
+        uint64_t active_tick_cnt = 0;
+
+        uint64_t finished_inst_cnt = 0;
+        uint64_t br_inst_cnt = 0;
+        uint64_t br_pred_hit_cnt = 0;
+        uint64_t jalr_inst_cnt = 0;
+        uint64_t jalr_pred_hit_cnt = 0;
+        uint64_t ld_inst_cnt = 0;
+        uint64_t st_inst_cnt = 0;
+        uint64_t amo_inst_cnt = 0;
+        uint64_t sys_inst_cnt = 0;
+        uint64_t mem_inst_cnt = 0;
+    } statistic;
 };
 
 

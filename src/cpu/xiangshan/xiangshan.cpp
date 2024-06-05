@@ -68,8 +68,7 @@ XiangShanCPU::XiangShanCPU(
         #undef OPENLOGFILE
     }
 
-    statistic = make_unique<XiangShanStatistic>();
-    memset(statistic.get(), 0, sizeof(XiangShanStatistic));
+    memset(&statistic, 0, sizeof(statistic));
 
     uint32_t cpu_width = param.decode_width;
 
@@ -140,11 +139,11 @@ void XiangShanCPU::on_current_tick() {
     io_dcache_port->on_current_tick();
     lsu->always_on_current_tick();
 
-    statistic->total_tick_cnt++;
+    statistic.total_tick_cnt++;
 
     if(!control.is_halt) {
         _cur_forward_pipeline();
-        statistic->active_tick_cnt++;
+        statistic.active_tick_cnt++;
     }
 }
 
@@ -169,20 +168,222 @@ void XiangShanCPU::apply_next_tick() {
 }
 
 void XiangShanCPU::clear_statistic() {
-
+    memset(&statistic, 0, sizeof(statistic));
 }
 
-void XiangShanCPU::print_statistic(std::ofstream &ofile) {
+#define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
 
+void XiangShanCPU::print_statistic(std::ofstream &ofile) {
+    #define STATU64(name) do{sprintf(log_buf, #name ": \t\t%ld\n", statistic.name);ofile << log_buf;}while(0)
+    LOGTOFILE("XSCPU:%d\n", cpu_id);
+    STATU64(total_tick_cnt);
+    STATU64(active_tick_cnt);
+    STATU64(finished_inst_cnt);
+    STATU64(br_inst_cnt);
+    STATU64(br_pred_hit_cnt);
+    STATU64(jalr_inst_cnt);
+    STATU64(jalr_pred_hit_cnt);
+    STATU64(ld_inst_cnt);
+    STATU64(st_inst_cnt);
+    STATU64(amo_inst_cnt);
+    STATU64(sys_inst_cnt);
+    STATU64(mem_inst_cnt);
+    #undef STATU64
 }
 
 void XiangShanCPU::print_setup_info(std::ofstream &ofile) {
-
+    
 }
 
 void XiangShanCPU::dump_core(std::ofstream &ofile) {
+    LOGTOFILE("XSCPU:%d\n", cpu_id);
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#FTQ: %ld items, pos ptr %d:\n", ftq.size(), ftq_pos);
+        int i = 0;
+        for(auto &p : ftq) {
+            LOGTOFILE("%d:0x%lx-0x%lx %ldinsts %ldbr %djmp 0x%lx | ", i, p->startpc, p->endpc, p->insts.size(), p->branchs.size(), (int)(p->jmpinfo), p->jmptarget);
+            i++;
+            if(i % 4 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 4 == 0) LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        vector<XSInst*> tmp;
+        inst_buffer->dbg_get_all(&tmp);
+        LOGTOFILE("#INST_BUF: %ld items:\n", tmp.size());
+        int i = 0;
+        for(auto &p : tmp) {
+            if(isa::isRVC(p->inst)) LOGTOFILE("%d:0x%lx:0x%04x | ", i, p->pc, p->inst);
+            else LOGTOFILE("%d:0x%lx:0x%08x | ", i, p->pc, p->inst);
+            i++;
+            if(i % 4 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 4 == 0) LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#ROB: %ld items:\n", rob.size());
+        int i = 0;
+        for(auto &p : rob) {
+            if(isa::isRVC(p->inst)) {
+                LOGTOFILE("%d:0x%lx:0x%04x %s (%d,%d,%d->%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->prs[0], p->prs[1], p->prs[2], p->prd);
+            }
+            else {
+                LOGTOFILE("%d:0x%lx:0x%08x %s (%d,%d,%d->%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->prs[0], p->prs[1], p->prs[2], p->prd);
+            }
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 == 0) LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#V-REGS:\n");
+        for(int i = 0; i < 32; i+=2) {
+            PhysReg pr1 = irnm.commited_table[i], pr2 = irnm.commited_table[i+1];
+            PhysReg pr3 = frnm.commited_table[i], pr4 = frnm.commited_table[i+1];
+            LOGTOFILE("%s(%02d)-%d: 0x%016lx, %s(%02d)-%d: 0x%016lx,    %s(%02d)-%d: 0x%016lx, %s(%02d)-%d: 0x%016lx,\n",
+                isa::ireg_names()[i], pr1, ireg.busy[pr1]?1:0, ireg.regfile[pr1],
+                isa::ireg_names()[i+1], pr2, ireg.busy[pr2]?1:0, ireg.regfile[pr2],
+                isa::freg_names()[i], pr3, freg.busy[pr3]?1:0, freg.regfile[pr3],
+                isa::freg_names()[i+1], pr4, freg.busy[pr4]?1:0, freg.regfile[pr4]
+            );
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#IREGS:\n");
+        for(int i = 0; i < param.phys_ireg_cnt; i+=4) {
+            LOGTOFILE("%02d-%d: 0x%016lx, %02d-%d: 0x%016lx, %02d-%d: 0x%016lx, %02d-%d: 0x%016lx,\n",
+                i, ireg.busy[i]?1:0, ireg.regfile[i], 
+                i+1, ireg.busy[i+1]?1:0, ireg.regfile[i+1], 
+                i+2, ireg.busy[i+2]?1:0, ireg.regfile[i+2], 
+                i+3, ireg.busy[i+3]?1:0, ireg.regfile[i+3]
+            );
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#IBYPASS:\n");
+        int i = 0;
+        for(auto &e : ireg.bypass) {
+            LOGTOFILE("%d:0x%016lx | ", e.first, e.second);
+            i++;
+            if(i % 4 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 4 == 0) LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#FREGS:\n");
+        for(int i = 0; i < param.phys_freg_cnt; i+=4) {
+            LOGTOFILE("%02d-%d: 0x%016lx, %02d-%d: 0x%016lx, %02d-%d: 0x%016lx, %02d-%d: 0x%016lx,\n",
+                i, freg.busy[i]?1:0, freg.regfile[i], 
+                i+1, freg.busy[i+1]?1:0, freg.regfile[i+1], 
+                i+2, freg.busy[i+2]?1:0, freg.regfile[i+2], 
+                i+3, freg.busy[i+3]?1:0, freg.regfile[i+3]
+            );
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#FBYPASS:\n");
+        int i = 0;
+        for(auto &e : freg.bypass) {
+            LOGTOFILE("%d:0x%016lx | ", e.first, e.second);
+            i++;
+            if(i % 4 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 4 == 0) LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    auto log_exu = [&](IntFPEXU *exu, string name) -> void {
+        LOGTOFILE("#%s-RS:\n", name.c_str());
+        int i = 0;
+        for(auto &p : exu->rs.get()) {
+            if(isa::isRVC(p->inst)) {
+                LOGTOFILE("%d:0x%lx:0x%04x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            else {
+                LOGTOFILE("%d:0x%lx:0x%08x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 == 0) LOGTOFILE("\n");
+        LOGTOFILE("#%s-EX:\n", name.c_str());
+        for(int j = 0; j < exu->opunit.size(); j++) {
+            auto p = exu->opunit[j].inst;
+            if(p == nullptr) LOGTOFILE("%d:Free\n", j);
+            LOGTOFILE("%d:0x%lx:0x%04x %s, processing (%d/%d)\n", j, p->pc, p->inst, p->dbgname.c_str(), exu->opunit[j].processed, exu->opunit[j].latency);
+        }
+    };
+    log_exu(alu1.get(), "ALU1");
+    LOGTOFILE("\n");
+    log_exu(alu2.get(), "ALU2");
+    LOGTOFILE("\n");
+    log_exu(mdu.get(), "MDU");
+    LOGTOFILE("\n");
+    log_exu(misc.get(), "MISC");
+    LOGTOFILE("\n");
+    log_exu(fmac1.get(), "FMAC1");
+    LOGTOFILE("\n");
+    log_exu(fmac2.get(), "FMAC2");
+    LOGTOFILE("\n");
+    log_exu(fmisc.get(), "FMISC");
+    LOGTOFILE("\n");
 
+    auto log_mrs = [&](LimitedTickList<XSInst*> *rs, string name) -> void {
+        LOGTOFILE("#%s-RS:\n", name.c_str());
+        int i = 0;
+        for(auto &p : rs->get()) {
+            if(isa::isRVC(p->inst)) {
+                LOGTOFILE("%d:0x%lx:0x%04x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            else {
+                LOGTOFILE("%d:0x%lx:0x%08x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 == 0) LOGTOFILE("\n");
+    };
+    log_mrs(rs_ld.get(), "LD");
+    LOGTOFILE("\n");
+    log_mrs(rs_sta.get(), "STA");
+    LOGTOFILE("\n");
+    log_mrs(rs_std.get(), "STD");
+    LOGTOFILE("\n");
+    log_mrs(rs_amo.get(), "AMO");
+    LOGTOFILE("\n");
+    log_mrs(rs_fence.get(), "FENCE");
+    LOGTOFILE("\n");
+
+    lsu->dump_core(ofile);
+    io_dcache_port->dump_core(ofile);
+
+    bpu->dump_core(ofile);
+
+    io_icache_port->dump_core(ofile);
 }
+
+#undef LOGTOFILE
 
 
 
@@ -691,7 +892,7 @@ void XiangShanCPU::cur_commit() {
         simroot_assert(fetch == ftq.front());
 
         if(inst->opcode == RV64OPCode::branch) {
-            statistic->br_inst_cnt ++;
+            statistic.br_inst_cnt ++;
             bool istaken = (inst->arg0 != 0);
             uint16_t instoff = inst->pc - fetch->startpc;
             uint16_t bridx = 0;
@@ -717,11 +918,11 @@ void XiangShanCPU::cur_commit() {
                 // 分支指令预测成功，可以释放备份映射表
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
-                statistic->br_pred_hit_cnt++;
+                statistic.br_pred_hit_cnt++;
             }
         }
         else if(inst->opcode == RV64OPCode::jalr) {
-            statistic->jalr_inst_cnt++;
+            statistic.jalr_inst_cnt++;
             VirtAddrT predtarget = fetch->jmptarget;
             VirtAddrT jmptarget = inst->arg1;
             if(predtarget != jmptarget) {
@@ -735,7 +936,7 @@ void XiangShanCPU::cur_commit() {
                 // 分支指令预测成功，可以释放备份映射表
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
-                statistic->jalr_pred_hit_cnt++;
+                statistic.jalr_pred_hit_cnt++;
             }
             simroot_assert(fetch->commit_cnt + 1 == fetch->insts.size());
             fetch->jmptarget = jmptarget;
@@ -744,16 +945,16 @@ void XiangShanCPU::cur_commit() {
         }
         else if(inst->opcode == RV64OPCode::load || inst->opcode == RV64OPCode::loadfp) {
             lsu->cur_commit_load(inst);
-            statistic->ld_inst_cnt++;
+            statistic.ld_inst_cnt++;
         }
         else if(inst->opcode == RV64OPCode::store || inst->opcode == RV64OPCode::storefp) {
             lsu->cur_commit_store(inst);
-            statistic->st_inst_cnt++;
+            statistic.st_inst_cnt++;
         }
         else if(inst->opcode == RV64OPCode::amo) {
             if(!lsu->cur_commit_amo(inst)) return;
             commit_finished = true;
-            statistic->amo_inst_cnt++;
+            statistic.amo_inst_cnt++;
         }
         else if(inst->opcode == RV64OPCode::system) {
             if(__n != 0) {
@@ -765,10 +966,10 @@ void XiangShanCPU::cur_commit() {
             if(control.sys_redirect.valid) {
                 dealloc_inst = false;
             }
-            statistic->sys_inst_cnt++;
+            statistic.sys_inst_cnt++;
         }
         else if(inst->opcode == RV64OPCode::miscmem) {
-            statistic->mem_inst_cnt++;
+            statistic.mem_inst_cnt++;
         }
 
         // 指令异常的处理
@@ -801,7 +1002,7 @@ void XiangShanCPU::cur_commit() {
                 frnm.freelist.push_back(inst->prstale);
                 frnm.commited_table[inst->vrd] = inst->prd;
             }
-            statistic->finished_inst_cnt++;
+            statistic.finished_inst_cnt++;
         }
 
         if(inst->flag & RVINSTFLAG_UNIQUE) {

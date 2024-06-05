@@ -10,13 +10,109 @@ namespace simcpu {
 
 namespace xs {
 
+void LSU::dump_core(std::ofstream &ofile) {
+    #define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__); ofile << log_buf;}while(0)
+    {
+        LOGTOFILE("#LSU-LD-INDEXING: ");
+        for(auto l : ld_indexing) LOGTOFILE("0x%lx, ", l);
+        LOGTOFILE("\n");
+        LOGTOFILE("#LSU-LD-WAITING: ");
+        for(auto l : ld_waiting.get()) LOGTOFILE("0x%lx, ", l);
+        LOGTOFILE("\n");
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#LSU-LDQ: %ld items\n", ldq_total_size);
+        int i = 0;
+        for(auto &e : load_queue.get()) {
+            LDQEntry* l = e.second;
+            LOGTOFILE("%d:0x%lx,%ld,%s,v", i, l->inst->pc, l->inst->id, l->inst->dbgname.c_str());
+            for(uint64_t j = l->valid.size(); j > 0; j--) {
+                if(l->valid[j-1]) LOGTOFILE("1");
+                else LOGTOFILE("0");
+            }
+            LOGTOFILE(",d");
+            for(uint64_t j = l->data.size(); j > 0; j--) {
+                LOGTOFILE("%02x", l->data[j-1]);
+            }
+            LOGTOFILE(" | ");
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 != 0) {
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#LSU-LDQ-WB: %ld items\n", wait_writeback_load.size());
+        int i = 0;
+        for(auto &e : wait_writeback_load) {
+            LOGTOFILE("%d:0x%lx,%ld,%s | ", i, e->pc, e->id, e->dbgname.c_str());
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 != 0) {
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#LSU-LDQ-FINISHED: %ld items\n", finished_load.size());
+        int i = 0;
+        for(auto &e : finished_load) {
+            XSInst *p = e.second;
+            LOGTOFILE("%d:0x%lx,%ld,%s | ", i, p->pc, p->id, p->dbgname.c_str());
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 != 0) {
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#LSU-STQ: %ld items\n", store_queue.size());
+        int i = 0;
+        for(auto &e : store_queue.get()) {
+            LOGTOFILE("%d:0x%lx,%ld,%s | ", i, e->pc, e->id, e->dbgname.c_str());
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 != 0) {
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    {
+        LOGTOFILE("#LSU-COMMITED-STB: %d items\n", commited_store_buf_indexing_cnt);
+        for(auto &e : commited_store_buf) {
+            LOGTOFILE("0x%lx, id %ld: ", e.first, e.second.last_inst_id);
+            for(int i = CACHE_LINE_LEN_BYTE - 1; i >= 0; i--) {
+                if(e.second.valid[i]) LOGTOFILE("%02x", e.second.linebuf[i]);
+                else LOGTOFILE("XX");
+            }
+            LOGTOFILE("\n");
+        }
+    }
+    LOGTOFILE("\n");
+    #undef LOGTOFILE
+}
+
 LSU::LSU(XiangShanParam *param, uint32_t cpu_id, CPUSystemInterface *io_sys, CacheInterfaceV2 *io_dcache, LSUPort *port)
 : param(param), cpu_id(cpu_id), io_sys_port(io_sys), io_dcache_port(io_dcache), port(port)
 {
     ld_addr_trans_queue = make_unique<SimpleTickQueue<XSInst*>>(2, 2, 0);
     st_addr_trans_queue = make_unique<SimpleTickQueue<XSInst*>>(2, 2, 0);
 }
-
 
 void LSU::on_current_tick() {
     if(port->fence->cur_size()) {
@@ -517,9 +613,9 @@ void LSU::_cur_load_queue() {
         }
     }
 
-    // LSU只有一个INT一个FP两个写回端口，每周期只能写回两条指令到旁路网络
+    // LSU只有两个写回端口，每周期只能写回两条指令到旁路网络
     uint32_t int_wb = 0, fp_wb = 0;
-    const uint32_t lsu_int_wb_width = 1, lsu_fp_wb_width = 1;
+    const uint32_t lsu_int_wb_width = 2, lsu_fp_wb_width = 2;
     auto iter = wait_writeback_load.begin();
     for(;iter != wait_writeback_load.end() && (int_wb < lsu_int_wb_width || fp_wb < lsu_fp_wb_width);) {
         auto inst = *iter;

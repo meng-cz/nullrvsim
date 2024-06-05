@@ -46,6 +46,11 @@ public:
     simroot::LogFileT debug_ofile = nullptr;
     char log_buf[256];
 
+    void clear_statistic() {};
+    void print_statistic(std::ofstream &ofile) {};
+    void print_setup_info(std::ofstream &ofile) {};
+    void dump_core(std::ofstream &ofile);
+
 protected:
 
     XiangShanParam *param;

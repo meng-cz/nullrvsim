@@ -221,25 +221,6 @@ typedef struct {
     uint32_t commited_store_buffer_size = 16;
 } XiangShanParam;
 
-
-typedef struct {
-    uint64_t total_tick_cnt = 0;
-    uint64_t active_tick_cnt = 0;
-
-    uint64_t finished_inst_cnt = 0;
-    uint64_t br_inst_cnt = 0;
-    uint64_t br_pred_hit_cnt = 0;
-    uint64_t jalr_inst_cnt = 0;
-    uint64_t jalr_pred_hit_cnt = 0;
-    uint64_t ld_inst_cnt = 0;
-    uint64_t st_inst_cnt = 0;
-    uint64_t amo_inst_cnt = 0;
-    uint64_t sys_inst_cnt = 0;
-    uint64_t mem_inst_cnt = 0;
-
-    
-} XiangShanStatistic;
-
 }}
 
 #endif
