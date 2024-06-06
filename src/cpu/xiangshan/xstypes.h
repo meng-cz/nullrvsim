@@ -20,6 +20,9 @@ using isa::RVRegType;
 #define XSIFU_BRANCH_CNT    (2)
 #define XSIFU_HIST_LEN      (128)
 
+/**
+ * 全局分支历史寄存器，用于获取折叠后的分支历史以生成TAGE索引
+*/
 class BrHist {
 public:
     BrHist() : bitlen(XSIFU_HIST_LEN), ptr(0) {
@@ -69,20 +72,63 @@ protected:
     uint32_t ptr = 0;
 };
 
-typedef struct {
-    uint32_t    bos;
-    uint32_t    tosr;
-    uint32_t    tosw;
-    uint32_t    ssp;
-} RASSnapshot;
+#define RAS_LEN     (32)
 
-enum class FetchPackJmp {
-    normal = 0,
-    jal,
-    jalr,
-    call,
-    ret
+/**
+ * 香山实际实现的RAS为两级栈结构，用于快速保存与恢复快照。这里模拟过程进行了简化
+*/
+class RASSnapShot {
+public:
+    RASSnapShot() {
+        data.assign(RAS_LEN, 0);
+        cnt.assign(RAS_LEN, 0);
+    }
+    inline void clear() {
+        data.assign(RAS_LEN, 0);
+        cnt.assign(RAS_LEN, 0);
+        bottom = top = 0;
+    }
+    inline void push(VirtAddrT ra) {
+        if(top == bottom) [[unlikely]] {
+            top = (top + 1) % len;
+            data[top] = ra;
+            cnt[top] = 0;
+        }
+        else {
+            if(data[top] == ra) cnt[top]++;
+            else {
+                top = (top + 1) % len;
+                data[top] = ra;
+                cnt[top] = 0;
+                if(top == bottom) [[unlikely]] bottom = (bottom + 1) % len;
+            }
+        }
+    }
+    inline VirtAddrT pop() {
+        if(top == bottom) [[unlikely]] return 0;
+        VirtAddrT ret = data[top];
+        if(cnt[top] > 0) {
+            cnt[top]--;
+        }
+        else {
+            top = (top?(top-1):(len-1));
+        }
+        return ret;
+    }
+protected:
+    vector<VirtAddrT> data;
+    vector<uint32_t> cnt;
+    uint32_t len = RAS_LEN;
+    uint32_t bottom = 0;
+    uint32_t top = 0;
 };
+
+#define FETCH_FLAG_JAL      (1<<0)
+#define FETCH_FLAG_JALR     (1<<1)
+#define FETCH_FLAG_CALL     (1<<2)
+#define FETCH_FLAG_RET      (1<<3)
+
+typedef uint32_t FetchFlagT;
 
 typedef struct {
     uint16_t    inst_offset = 0;
@@ -95,17 +141,16 @@ typedef struct {
     VirtAddrT           startpc;    // Fetch块第一条指令的pc
     VirtAddrT           endpc;      // Fetch块最后一条指令的下一条指令的pc
     vector<FTQBranch>   branchs;    // Fetch块内的分支指令信息
-    FetchPackJmp        jmpinfo;    // Fetch块最后一条指令是不是jmp
+    FetchFlagT          jmpinfo;    // Fetch块最后一条指令是不是jmp
     VirtAddrT           jmptarget;  // Fetch块最后一条指令的跳转地址
     BrHist              bhr;        // 进行该Fetch块的分支预测前的全局分支历史
-    RASSnapshot         ras;        // 进行函数跳转预测前的RAS信息
-    RASSnapshot         ras2;       // 进行函数跳转预测后的RAS信息
+    RASSnapShot         ras;        // 进行函数跳转预测前的RAS信息
     uint16_t            commit_cnt;
     bool                commit_ras; // 是否进行了RAS预测，如果进行了就需要在提交时更新RAS
 } FTQEntry;
 
 inline VirtAddrT nextpc(FTQEntry *fetch) {
-    VirtAddrT ret = ((fetch->jmpinfo == FetchPackJmp::normal)?(fetch->endpc):(fetch->jmptarget));
+    VirtAddrT ret = ((fetch->jmptarget)?(fetch->jmptarget):(fetch->endpc));
     for(auto &br : fetch->branchs) {
         if(br.pred_taken >= 0) {
             ret = fetch->startpc + (int64_t)(br.inst_offset) + (int64_t)(br.jmp_offset);

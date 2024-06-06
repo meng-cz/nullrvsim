@@ -67,7 +67,7 @@ void BPU::dump_core(std::ofstream &ofile) {
             LOGTOFILE("set %d: ", s);
             for(auto &e : ftb->p_sets[s]) {
                 FTBEntry &f = e.second;
-                LOGTOFILE("0x%lx:len%d %ldbr(%d) %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), f.always_taken, (int)(f.jmpinfo), (f.jmptarget.valid)?(f.jmptarget.data):0);
+                LOGTOFILE("0x%lx:len%d %ldbr(%d) %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), f.always_taken, (int)(f.jmpinfo), f.jaltarget);
             }
             LOGTOFILE("\n");
         }
@@ -79,7 +79,7 @@ void BPU::dump_core(std::ofstream &ofile) {
             LOGTOFILE("set %d: ", s);
             for(auto &e : ubtb->p_sets[s]) {
                 FTBEntry &f = e.second;
-                LOGTOFILE("0x%lx:len%d %ldbr %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), (int)(f.jmpinfo), (f.jmptarget.valid)?(f.jmptarget.data):0);
+                LOGTOFILE("0x%lx:len%d %ldbr %djmp 0x%lx | ", e.first, f.ft_len, f.branchs.size(), (int)(f.jmpinfo), f.jaltarget);
             }
             LOGTOFILE("\n");
         }
@@ -136,10 +136,6 @@ BPU::BPU(XiangShanParam *param, list<FTQEntry*> *ftq, VirtAddrT pc)
         }
     }
 
-    ras_ps.assign(ras_ps_size, RASPSEntry());
-    ras_cs.assign(ras_cs_size, RASCSEntry());
-    memset(&ras, 0, sizeof(ras));
-    ras.tosw = 1;
 }
 
 void BPU::on_current_tick() {
@@ -216,7 +212,7 @@ void BPU::cur_update_fetch_result(FTQEntry *fetch) {
 }
 
 void BPU::cur_commit_jalr_target(FTQEntry *fetch) {
-    if(fetch->jmpinfo == FetchPackJmp::jal || fetch->jmpinfo == FetchPackJmp::normal) return;
+    if((fetch->jmpinfo & FETCH_FLAG_JALR) == 0) return;
     UpdateBPUReq req;
     req.type = UpdateBPUField::jalr;
     req.startpc = fetch->startpc;
@@ -242,10 +238,10 @@ void BPU::cur_commit_branch(FTQEntry *fetch, vector<bool> &is_taken) {
     toapply_update_reqs.emplace_back(req);
 }
 
-void BPU::apl_redirect(VirtAddrT pc, BrHist &bhr, RASSnapshot &ras) {
+void BPU::apl_redirect(VirtAddrT pc, BrHist &bhr, RASSnapShot &ras) {
+    apl_redirect(pc);
     this->bhr = bhr;
     this->ras = ras;
-    apl_redirect(pc);
 }
 void BPU::apl_redirect(VirtAddrT pc) {
     this->pc = pc;
@@ -257,6 +253,8 @@ void BPU::apl_redirect(VirtAddrT pc) {
         delete p;
     }
     p3_expected_pc.valid = false;
+    bhr.clear();
+    ras.clear();
 }
 
 
@@ -264,7 +262,12 @@ ValidData<VirtAddrT> BPU::ubtb_nextpc(VirtAddrT startpc) {
     FTBEntry *p = nullptr;
     ValidData<VirtAddrT> ret;
     if(ret.valid = ubtb->get_line(ubtb_idx(startpc), &p, true)) {
-        ret.data = ((p->jmpinfo == FetchPackJmp::normal || !p->jmptarget.valid)?(startpc + p->ft_len):(p->jmptarget.data));
+        if((p->jmpinfo & FETCH_FLAG_JAL) && p->jaltarget) {
+            ret.data = p->jaltarget;
+        }
+        else {
+            ret.data = startpc + p->ft_len;
+        }
         for(auto &br : p->branchs) {
             if(br.pred_taken >= 0) {
                 ret.data = startpc + (int64_t)(br.inst_offset) + (int64_t)(br.jmp_offset);
@@ -289,7 +292,7 @@ void BPU::do_pred() {
     fetch->ras = ras;
     fetch->endpc = fetch->startpc + param->fetch_width_bytes;
     fetch->commit_ras = false;
-    fetch->jmpinfo = FetchPackJmp::normal;
+    fetch->jmpinfo = 0;
     fetch->jmptarget = 0;
 
     FTBEntry * ftb_entry = nullptr;
@@ -300,9 +303,9 @@ void BPU::do_pred() {
 
     fetch->endpc = fetch->startpc + ftb_entry->ft_len;
     fetch->jmpinfo = ftb_entry->jmpinfo;
-    FetchPackJmp jmp = ftb_entry->jmpinfo;
-    if(jmp != FetchPackJmp::normal && ftb_entry->jmptarget.valid) {
-        fetch->jmptarget = ftb_entry->jmptarget.data;
+    FetchFlagT jmp = ftb_entry->jmpinfo;
+    if(jmp & FETCH_FLAG_JAL) {
+        fetch->jmptarget = ftb_entry->jaltarget;
     }
     fetch->branchs = ftb_entry->branchs;
 
@@ -337,40 +340,32 @@ void BPU::do_pred() {
         }
     }
 
-    if(jmp != FetchPackJmp::normal && jmp != FetchPackJmp::jal) {
-        if(jmp == FetchPackJmp::call) {
-            fetch->commit_ras = true;
-            pred_ras_call(fetch->endpc);
+    if(jmp & FETCH_FLAG_CALL) {
+        fetch->commit_ras = true;
+        pred_ras_call(fetch->endpc);
+    }
+    if(jmp & FETCH_FLAG_JALR) {
+        if(jmp & FETCH_FLAG_RET) {
+            if(fetch->jmptarget = pred_ras_ret()) fetch->commit_ras = true;
         }
-        else if(jmp == FetchPackJmp::ret) {
-            fetch->commit_ras = true;
-            fetch->jmptarget = pred_ras_ret();
-        }
-        auto ittage_res = pred_ittage(fetch->startpc);
-        if(ittage_res.u > 0) {
-            fetch->jmptarget = ittage_res.jmptarget;
+        if(fetch->jmptarget == 0) {
+            auto ittage_res = pred_ittage(fetch->startpc);
+            if(ittage_res.u > 0) {
+                fetch->jmptarget = ittage_res.jmptarget;
+            }
         }
     }
-    fetch->ras2 = ras;
 
     if(debug_ofile) {
-        sprintf(log_buf ,"%ld:P2: Pred @0x%lx, %ld brs, jmp:", simroot::get_current_tick(), fetch->startpc, fetch->branchs.size());
+        sprintf(log_buf ,"%ld:P2: Pred @0x%lx, %ld brs, jmp:0x%x", simroot::get_current_tick(), fetch->startpc, fetch->branchs.size(), fetch->jmpinfo);
         string str(log_buf);
-        switch (fetch->jmpinfo)
-        {
-        case FetchPackJmp::normal: str += "normal"; break;
-        case FetchPackJmp::jal: str += "jal"; break;
-        case FetchPackJmp::jalr: str += "jalr"; break;
-        case FetchPackJmp::call: str += "call"; break;
-        case FetchPackJmp::ret: str += "ret"; break;
-        }
         if(!fetch->branchs.empty()) {
             str += ", brpred:";
             for(auto &br : fetch->branchs) {
                 str += ((br.pred_taken)?("1 "):("0 "));
             }
         }
-        if(fetch->jmpinfo != FetchPackJmp::normal) {
+        if(fetch->jmpinfo) {
             sprintf(log_buf, ", jmppc 0x%lx", fetch->jmptarget);
         }
         simroot::log_line(debug_ofile, str);
@@ -453,8 +448,7 @@ void BPU::do_update_ftb() {
     FTBEntry entry;
     entry.ft_len = p.ft_len;
     entry.jmpinfo = p.jmpinfo;
-    entry.jmptarget.data = p.jmptarget;
-    entry.jmptarget.valid = (p.jmpinfo == FetchPackJmp::jal || p.jmptarget != 0);
+    entry.jaltarget = ((p.jmpinfo & FETCH_FLAG_JAL)?p.jmptarget:0);
     entry.always_taken = true;
     entry.branchs = p.branchs;
     ftb->insert_line(ftb_idx(p.startpc), &entry, nullptr, nullptr);
@@ -475,16 +469,15 @@ void BPU::do_update_jalr() {
         simroot::log_line(debug_ofile, log_buf);
     }
 
-    if(ftb->get_line(pc >> 1, &entry, true)) {
-        entry->jmpinfo = p.jmpinfo;
-        entry->jmptarget.data = p.jmptarget;
-        entry->jmptarget.valid = true;
-    }
+    // if(ftb->get_line(pc >> 1, &entry, true)) {
+    //     entry->jmpinfo = p.jmpinfo;
+    //     entry->jaltarget = p.jmptarget;
+    // }
     if(p.commit_ras) {
-        if(p.jmpinfo == FetchPackJmp::call) {
+        if(p.jmpinfo & FETCH_FLAG_CALL) {
             commit_ras_call(p.ras);
         }
-        else if(p.jmpinfo == FetchPackJmp::ret) {
+        else if(p.jmpinfo & FETCH_FLAG_RET) {
             commit_ras_ret(p.ras, p.jmptarget);
         }
     }
@@ -798,7 +791,6 @@ BPU::ITTageEntry BPU::pred_ittage(VirtAddrT startpc) {
 
 void BPU::update_ittage() {
     simroot_assert(update_reqs.front().type == UpdateBPUField::jalr);
-    simroot_assert(update_reqs.front().jmpinfo != FetchPackJmp::normal && update_reqs.front().jmpinfo != FetchPackJmp::jal);
     ITTageIndexRes res;
     auto &p = update_reqs.front();
     _ittage_indexing(p.bhrbak, update_reqs.front().startpc, &res);
@@ -844,44 +836,60 @@ void BPU::update_ittage() {
 // --------------- RAS --------------------
 
 void BPU::pred_ras_call(VirtAddrT nextpc) {
-    // Push操作：当前被预测的块还没有commit，所以只能在预测栈上进行push，具体操作为链式栈Push过程
-    uint32_t newptr = ras.tosw;
-    ras.tosw = (ras.tosw + 1) % ras_ps_size;
-    auto &entry = ras_ps[newptr];
-    entry.jmptarget = nextpc;
-    entry.next = ras.tosr;
-    ras.tosr = newptr;
+    ras.push(nextpc);
 }
 
 VirtAddrT BPU::pred_ras_ret() {
-    // Pop操作：首先通过“预测栈”是否为空，来判断当前栈顶是在预测栈上，还是在提交栈上。然后获取对应的栈顶元素，按照“栈”结构自己对应的方法进行pop。链式结构，TOSR按索引指向上一个元素，普通结构，ssp-=1
-    VirtAddrT ret = 0;
-    if(ras.bos == ras.tosr) {
-        ret = ras_cs[ras.ssp].jmptarget;
-        ras.ssp = ((ras.ssp == 0)?(ras_cs_size - 1):(ras.ssp - 1));
-    }
-    else {
-        ret = ras_ps[ras.tosr].jmptarget;
-        ras.tosr = ras_ps[ras.tosr].next;
-    }
-    return ret;
+    return ras.pop();
 }
 
-void BPU::commit_ras_call(RASSnapshot &ptrs) {
-    // 预测块为call正确：需要进行push操作，需要压栈的元素消息（预测地址）来自“预测栈”，具体位置信息POS由commit消息提供。完成提交栈的压栈操作后，对预测栈的栈低指针BOS进行更新，设置BOS=POS
-    uint32_t pos = ptrs.tosw; // Fetch中的ras快照是push前，因此那次push的位置是新元素指针tosw
-    ras.bos = pos;
-    ras.ssp = (ras.ssp + 1) % ras_cs_size;
-    ras_cs[ras.ssp].jmptarget = ras_ps[pos].jmptarget;
-    ras_ps[pos].next = pos; // 防止飞指针
+void BPU::commit_ras_call(RASSnapShot &ptrs) {
+    
 }
 
-void BPU::commit_ras_ret(RASSnapshot &ptrs, VirtAddrT nextpc) {
-    // 预测块为ret正确：需要进行pop操作。在call/ret序列中，肯定是先call后ret，所以此时ret对应的call时压栈的元素肯定在提交栈中，所以直接从commit消息中获取提交栈顶指针nsp，进行nsp -= 1操作
-    if(ras_cs[ras.ssp].jmptarget == nextpc) {
-        ras.ssp = ((ras.ssp == 0)?(ras_cs_size - 1):(ras.ssp - 1));
-    }
+void BPU::commit_ras_ret(RASSnapShot &ptrs, VirtAddrT nextpc) {
+    
 }
+
+// void BPU::pred_ras_call(VirtAddrT nextpc) {
+//     // Push操作：当前被预测的块还没有commit，所以只能在预测栈上进行push，具体操作为链式栈Push过程
+//     uint32_t newptr = ras.tosw;
+//     ras.tosw = (ras.tosw + 1) % ras_ps_size;
+//     auto &entry = ras_ps[newptr];
+//     entry.jmptarget = nextpc;
+//     entry.next = ras.tosr;
+//     ras.tosr = newptr;
+// }
+
+// VirtAddrT BPU::pred_ras_ret() {
+//     // Pop操作：首先通过“预测栈”是否为空，来判断当前栈顶是在预测栈上，还是在提交栈上。然后获取对应的栈顶元素，按照“栈”结构自己对应的方法进行pop。链式结构，TOSR按索引指向上一个元素，普通结构，ssp-=1
+//     VirtAddrT ret = 0;
+//     if(ras.bos == ras.tosr) {
+//         ret = ras_cs[ras.ssp].jmptarget;
+//         ras.ssp = ((ras.ssp == 0)?(ras_cs_size - 1):(ras.ssp - 1));
+//     }
+//     else {
+//         ret = ras_ps[ras.tosr].jmptarget;
+//         ras.tosr = ras_ps[ras.tosr].next;
+//     }
+//     return ret;
+// }
+
+// void BPU::commit_ras_call(RASSnapShot &ptrs) {
+//     // 预测块为call正确：需要进行push操作，需要压栈的元素消息（预测地址）来自“预测栈”，具体位置信息POS由commit消息提供。完成提交栈的压栈操作后，对预测栈的栈低指针BOS进行更新，设置BOS=POS
+//     uint32_t pos = ptrs.tosw; // Fetch中的ras快照是push前，因此那次push的位置是新元素指针tosw
+//     ras.bos = pos;
+//     ras.ssp = (ras.ssp + 1) % ras_cs_size;
+//     ras_cs[ras.ssp].jmptarget = ras_ps[pos].jmptarget;
+//     ras_ps[pos].next = pos; // 防止飞指针
+// }
+
+// void BPU::commit_ras_ret(RASSnapShot &ptrs, VirtAddrT nextpc) {
+//     // 预测块为ret正确：需要进行pop操作。在call/ret序列中，肯定是先call后ret，所以此时ret对应的call时压栈的元素肯定在提交栈中，所以直接从commit消息中获取提交栈顶指针nsp，进行nsp -= 1操作
+//     if(ras_cs[ras.ssp].jmptarget == nextpc) {
+//         ras.ssp = ((ras.ssp == 0)?(ras_cs_size - 1):(ras.ssp - 1));
+//     }
+// }
 
 
 }}

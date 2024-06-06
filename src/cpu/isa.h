@@ -358,7 +358,12 @@ inline bool pdec_isJI(RVInstT inst) {
     return false;
 }
 
-inline bool pdec_isCALL(RVInstT inst) {
+inline bool pdec_isCALLI(RVInstT inst) {
+    if((inst & 0x7F) == OP_JAL && ((inst >> 7) & 31) == 1) return true;
+    return false;
+}
+
+inline bool pdec_isCALLR(RVInstT inst) {
     if(isRVC(inst)) {
         if((inst & 0x7f) == 2 && ((inst>>12) & 15) == 9 && ((inst >> 7) & 31)) return true;
     }
@@ -370,7 +375,7 @@ inline bool pdec_isCALL(RVInstT inst) {
 
 inline bool pdec_isRET(RVInstT inst) {
     if(isRVC(inst)) {
-        if((inst & 0x7f) == 2 && ((inst>>12) & 15) == 8 && ((inst >> 7) & 31)) return true;
+        if((inst & 0x7f) == 2 && ((inst>>12) & 15) == 8 && ((inst >> 7) & 31) == 1) return true;
     }
     else {
         if((inst & 0x7F) == OP_JALR && ((inst >> 7) & 31) != 1 && ((inst >> 15) & 31) == 1) return true;

@@ -53,10 +53,10 @@ SimError perform_int_op_64(RV64IntOP73 op, IntDataT *out, IntDataT s1, IntDataT 
     case RV64IntOP73::MULH: RAW_DATA_AS(ret).i64 = tmp_mulh(RAW_DATA_AS(s1).i64, RAW_DATA_AS(s2).i64); break;
     case RV64IntOP73::MULHSU: RAW_DATA_AS(ret).i64 = tmp_mulh(RAW_DATA_AS(s1).i64, RAW_DATA_AS(s2).u64); break;
     case RV64IntOP73::MULHU: RAW_DATA_AS(ret).i64 = tmp_mulh(RAW_DATA_AS(s1).u64, RAW_DATA_AS(s2).u64); break;
-    case RV64IntOP73::DIV : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i64) / (RAW_DATA_AS(s2).i64); break;
-    case RV64IntOP73::DIVU: RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u64) / (RAW_DATA_AS(s2).u64); break;
-    case RV64IntOP73::REM : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i64) % (RAW_DATA_AS(s2).i64); break;
-    case RV64IntOP73::REMU: RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u64) % (RAW_DATA_AS(s2).u64); break;
+    case RV64IntOP73::DIV : if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i64) / (RAW_DATA_AS(s2).i64); break;
+    case RV64IntOP73::DIVU: if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u64) / (RAW_DATA_AS(s2).u64); break;
+    case RV64IntOP73::REM : if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i64) % (RAW_DATA_AS(s2).i64); break;
+    case RV64IntOP73::REMU: if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u64) % (RAW_DATA_AS(s2).u64); break;
     default: return SimError::unsupported;
     }
     *out = ret;
@@ -74,10 +74,10 @@ SimError perform_int_op_32(RV64IntOP73 op, IntDataT *out, IntDataT s1, IntDataT 
     case RV64IntOP73::SRL : RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u32) >> (RAW_DATA_AS(s2).u32 & 0x1f); if(RAW_DATA_AS(ret).u64 >> 31) RAW_DATA_AS(ret).u64 |= 0xffffffff00000000UL; break;
     case RV64IntOP73::SRA : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) >> (RAW_DATA_AS(s2).u32 & 0x1f); break;
     case RV64IntOP73::MUL : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) * (RAW_DATA_AS(s2).i32); break;
-    case RV64IntOP73::DIV : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) / (RAW_DATA_AS(s2).i32); break;
-    case RV64IntOP73::DIVU: RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u32) / (RAW_DATA_AS(s2).u32); break;
-    case RV64IntOP73::REM : RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) % (RAW_DATA_AS(s2).i32); break;
-    case RV64IntOP73::REMU: RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u32) % (RAW_DATA_AS(s2).u32); break;
+    case RV64IntOP73::DIV : if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) / (RAW_DATA_AS(s2).i32); break;
+    case RV64IntOP73::DIVU: if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u32) / (RAW_DATA_AS(s2).u32); break;
+    case RV64IntOP73::REM : if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).i64 = (RAW_DATA_AS(s1).i32) % (RAW_DATA_AS(s2).i32); break;
+    case RV64IntOP73::REMU: if(s2==0) return SimError::devidebyzero; RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u32) % (RAW_DATA_AS(s2).u32); break;
     default: return SimError::unsupported;
     }
     *out = ret;

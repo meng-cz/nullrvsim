@@ -342,15 +342,21 @@ protected:
         uint64_t active_tick_cnt = 0;
 
         uint64_t finished_inst_cnt = 0;
-        uint64_t br_inst_cnt = 0;
-        uint64_t br_pred_hit_cnt = 0;
-        uint64_t jalr_inst_cnt = 0;
-        uint64_t jalr_pred_hit_cnt = 0;
         uint64_t ld_inst_cnt = 0;
         uint64_t st_inst_cnt = 0;
         uint64_t amo_inst_cnt = 0;
         uint64_t sys_inst_cnt = 0;
         uint64_t mem_inst_cnt = 0;
+
+        uint64_t br_inst_cnt = 0;
+        uint64_t br_pred_hit_cnt = 0;
+        uint64_t jalr_inst_cnt = 0;
+        uint64_t jalr_pred_hit_cnt = 0;
+        uint64_t ret_inst_cnt = 0;
+        uint64_t ret_pred_hit_cnt = 0;
+
+        uint64_t fetch_pack_cnt = 0;
+        uint64_t fetch_pack_hit_cnt = 0;
     } statistic;
 };
 

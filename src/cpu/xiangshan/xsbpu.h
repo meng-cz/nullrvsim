@@ -17,8 +17,8 @@ using simcache::GenericLRUCacheBlock;
 
 typedef struct {
     uint16_t                ft_len = 0;
-    FetchPackJmp            jmpinfo;
-    ValidData<VirtAddrT>    jmptarget;
+    FetchFlagT              jmpinfo;
+    VirtAddrT               jaltarget;
     vector<FTQBranch>       branchs;
     bool                    always_taken;
 } FTBEntry;
@@ -40,7 +40,7 @@ public:
     void cur_commit_jalr_target(FTQEntry *fetch); // 更新jalr的跳转目标
     void cur_commit_branch(FTQEntry *fetch, vector<bool> &is_taken);
 
-    void apl_redirect(VirtAddrT pc, BrHist &bhr, RASSnapshot &ras);
+    void apl_redirect(VirtAddrT pc, BrHist &bhr, RASSnapShot &ras);
     void apl_redirect(VirtAddrT pc);
 
     simroot::LogFileT debug_ofile = nullptr;
@@ -142,24 +142,12 @@ protected:
 
 
     // ---- RAS ----
-
-    typedef struct {
-        VirtAddrT   jmptarget = 0;
-        uint16_t    ctr = 0;
-        uint32_t    next = 0;
-    } RASPSEntry;
-    typedef struct {
-        VirtAddrT   jmptarget = 0;
-        uint16_t    ctr = 0;
-    } RASCSEntry;
-    vector<RASPSEntry> ras_ps;
-    vector<RASCSEntry> ras_cs;
-    RASSnapshot ras;
+    RASSnapShot ras;
 
     void pred_ras_call(VirtAddrT nextpc);
     VirtAddrT pred_ras_ret();
-    void commit_ras_call(RASSnapshot &ptrs);
-    void commit_ras_ret(RASSnapshot &ptrs, VirtAddrT nextpc);
+    void commit_ras_call(RASSnapShot &ptrs);
+    void commit_ras_ret(RASSnapShot &ptrs, VirtAddrT nextpc);
 
 
 // ---------- update -----------
@@ -174,12 +162,12 @@ protected:
         UpdateBPUField  type;
         VirtAddrT       startpc;
         uint16_t        ft_len;
-        FetchPackJmp    jmpinfo;
+        FetchFlagT      jmpinfo;
         VirtAddrT       jmptarget;
         vector<FTQBranch> branchs;
         vector<bool>    is_taken;
         BrHist          bhrbak;
-        RASSnapshot     ras;
+        RASSnapShot     ras;
         bool            commit_ras;
     } UpdateBPUReq;
     list<UpdateBPUReq> toapply_update_reqs;

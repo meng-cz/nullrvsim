@@ -152,7 +152,7 @@ void XiangShanCPU::apply_next_tick() {
     io_dcache_port->apply_next_tick();
     lsu->always_apply_next_tick();
 
-    if(control.apply_halt) {
+    if(control.apply_halt) [[unlikely]] {
         control.is_halt = true;
         control.apply_halt = false;
     }
@@ -178,21 +178,28 @@ void XiangShanCPU::print_statistic(std::ofstream &ofile) {
     LOGTOFILE("XSCPU:%d\n", cpu_id);
     STATU64(total_tick_cnt);
     STATU64(active_tick_cnt);
+    LOGTOFILE("\n");
     STATU64(finished_inst_cnt);
-    STATU64(br_inst_cnt);
-    STATU64(br_pred_hit_cnt);
-    STATU64(jalr_inst_cnt);
-    STATU64(jalr_pred_hit_cnt);
     STATU64(ld_inst_cnt);
     STATU64(st_inst_cnt);
     STATU64(amo_inst_cnt);
     STATU64(sys_inst_cnt);
     STATU64(mem_inst_cnt);
+    LOGTOFILE("\n");
+    STATU64(br_inst_cnt);
+    STATU64(br_pred_hit_cnt);
+    STATU64(jalr_inst_cnt);
+    STATU64(jalr_pred_hit_cnt);
+    STATU64(ret_inst_cnt);
+    STATU64(ret_pred_hit_cnt);
+    LOGTOFILE("\n");
+    STATU64(fetch_pack_cnt);
+    STATU64(fetch_pack_hit_cnt);
     #undef STATU64
 }
 
 void XiangShanCPU::print_setup_info(std::ofstream &ofile) {
-    
+
 }
 
 void XiangShanCPU::dump_core(std::ofstream &ofile) {
@@ -407,7 +414,7 @@ void XiangShanCPU::_cur_fetch_one_pack() {
         fetchbuf.bytecnt = fetchbuf.brcnt = 0;
     }
 
-    if(fetchbuf.pc & 1) {
+    if(fetchbuf.pc & 1) [[unlikely]] {
         insert_error(ifu_errors, SimError::invalidpc, fetchbuf.pc, 0, 0);
         return;
     }
@@ -432,13 +439,13 @@ void XiangShanCPU::_cur_fetch_one_pack() {
             else {
                 PhysAddrT paddr = 0;
                 res = io_sys_port->v_to_p(cpu_id, fetch_start, &paddr, PGFLAG_X);
-                if(res == SimError::success) {
+                if(res == SimError::success) [[likely]] {
                     res = io_icache_port->load(paddr, fetch_length, fetchbuf.rawbuf, false);
                 }
             }
-            if(res == SimError::invalidaddr) res = SimError::invalidpc;
-            else if(res == SimError::unaccessable) res = SimError::unexecutable;
-            if(res == SimError::invalidpc || res == SimError::unexecutable || res == SimError::unaligned) {
+            if(res == SimError::invalidaddr) [[unlikely]] res = SimError::invalidpc;
+            else if(res == SimError::unaccessable) [[unlikely]] res = SimError::unexecutable;
+            if(res == SimError::invalidpc || res == SimError::unexecutable || res == SimError::unaligned) [[unlikely]] {
                 insert_error(ifu_errors, res, fetchbuf.pc, fetch_length, 0);
                 has_err = true;
             }
@@ -475,13 +482,13 @@ void XiangShanCPU::_cur_fetch_one_pack() {
             fetchbuf.pc += 2;
             fetchbuf.bytecnt += 2;
         }
-        if(isa::pdec_isJ(inst) || fetchbuf.bytecnt >= param.fetch_width_bytes) {
+        if(isa::pdec_isJ(inst) || fetchbuf.bytecnt >= param.fetch_width_bytes) [[unlikely]] {
             break;
         }
     }
 
     if(finished) {
-        if(!fetch->insts.empty()) {
+        if(!fetch->insts.empty()) [[likely]] {
             if(debug_pipeline_ofile) {
                 sprintf(log_buf, "%ld:IFU: Fetch(%d/%ld) @0x%lx, len %d, ftb len %ld, err %d:",
                     simroot::get_current_tick(), ftq_pos + 1, ftq.size(),
@@ -524,7 +531,7 @@ void XiangShanCPU::_cur_pred_check() {
     // 用于跟ftb给的信息进行对比
     vector<int32_t> brjmpoffset;
     vector<uint16_t> brinstoffset;
-    FetchPackJmp jmpinfo = FetchPackJmp::normal;
+    FetchFlagT jmpinfo = 0;
     VirtAddrT jmptarget;
     uint16_t len = 0;
 
@@ -544,22 +551,23 @@ void XiangShanCPU::_cur_pred_check() {
         }
         else if(isa::pdec_isJI(insts[i])) {
             simroot_assert(i + 1 == insts.size());
-            jmpinfo = FetchPackJmp::jal;
+            jmpinfo |= FETCH_FLAG_JAL;
             int32_t target = 0;
             simroot_assert(isa::pdec_get_J_target(insts[i], &target));
             jmptarget = fetch->startpc + len + (int64_t)target;
-        }
-        else if(isa::pdec_isCALL(insts[i])) {
-            simroot_assert(i + 1 == insts.size());
-            jmpinfo = FetchPackJmp::call;
-        }
-        else if(isa::pdec_isRET(insts[i])) {
-            simroot_assert(i + 1 == insts.size());
-            jmpinfo = FetchPackJmp::ret;
+            if(isa::pdec_isCALLI(insts[i])) {
+                jmpinfo |= FETCH_FLAG_CALL;
+            }
         }
         else if(isa::pdec_isJR(insts[i])) {
             simroot_assert(i + 1 == insts.size());
-            jmpinfo = FetchPackJmp::jalr;
+            jmpinfo |= FETCH_FLAG_JALR;
+            if(isa::pdec_isCALLR(insts[i])) {
+                jmpinfo |= FETCH_FLAG_CALL;
+            }
+            else if(isa::pdec_isRET(insts[i])) {
+                jmpinfo |= FETCH_FLAG_RET;
+            }
         }
         len += (isa::isRVC(insts[i])?2:4);
     }
@@ -567,7 +575,7 @@ void XiangShanCPU::_cur_pred_check() {
     simroot_assert(brjmpoffset.size() <= XSIFU_BRANCH_CNT);
 
     bool lencheck = (fetch->startpc + len == fetch->endpc);
-    bool jmpcheck = (jmpinfo == fetch->jmpinfo && (jmpinfo != FetchPackJmp::jal || jmptarget == fetch->jmptarget));
+    bool jmpcheck = (jmpinfo == fetch->jmpinfo && ((jmpinfo & FETCH_FLAG_JAL) == 0 || jmptarget == fetch->jmptarget));
     bool brcheck = (brjmpoffset.size() == fetch->branchs.size());
     if(brcheck) for(int i = 0; i < brjmpoffset.size(); i++) {
         if(brjmpoffset[i] != fetch->branchs[i].jmp_offset || brinstoffset[i] != fetch->branchs[i].inst_offset) {
@@ -578,7 +586,7 @@ void XiangShanCPU::_cur_pred_check() {
     if(!lencheck || !jmpcheck || !brcheck) {
         fetch->endpc = fetch->startpc + len;
         fetch->jmpinfo = jmpinfo;
-        if(jmpinfo == FetchPackJmp::jal) fetch->jmptarget = jmptarget;
+        if(jmpinfo & FETCH_FLAG_JAL) fetch->jmptarget = jmptarget;
         vector<FTQBranch> newbr;
         newbr.resize(brjmpoffset.size());
         for(int i = 0; i < brjmpoffset.size(); i++) {
@@ -593,6 +601,10 @@ void XiangShanCPU::_cur_pred_check() {
 
         bpu->cur_update_fetch_result(fetch);
     }
+    else {
+        statistic.fetch_pack_hit_cnt++;
+    }
+    statistic.fetch_pack_cnt++;
 
     if(debug_pipeline_ofile) {
         sprintf(log_buf, "%ld:PDEC: @0x%lx, %ld insts, check:%d", simroot::get_current_tick(), fetch->startpc, fetch->insts.size(), (lencheck && jmpcheck && brcheck)?1:0);
@@ -633,17 +645,15 @@ void XiangShanCPU::apl_bpu_redirect() {
 
     FTQEntry * fetch = control.bpu_redirect.data; // 这一组取出来的指令是正确的，已经下发，所以从这一条之后开始删
 
-    VirtAddrT nextpc = 0;
-    if(fetch->jmpinfo == FetchPackJmp::normal) {
-        nextpc = fetch->endpc;
-    }
-    else if(fetch->jmptarget != 0) {
+    VirtAddrT nextpc = fetch->endpc;
+    if(fetch->jmptarget != 0) {
         // jalr的分支预测只与pc有关，可以保留
         nextpc = fetch->jmptarget;
     }
     BrHist hist = fetch->bhr;
     bool brout = false;
-    for(auto &br : fetch->branchs) { // 更新分支历史到预测这个pack之后的状态
+    // 更新分支历史到预测这个pack之后的状态
+    for(auto &br : fetch->branchs) { 
         hist.push(br.pred_taken >= 0);
         if(br.pred_taken >= 0) {
             nextpc = fetch->startpc + br.inst_offset + br.jmp_offset;
@@ -652,13 +662,22 @@ void XiangShanCPU::apl_bpu_redirect() {
         }
     }
 
-    if(!nextpc) {
+    if(!nextpc) [[unlikely]] {
         // 完全未知的jalr指令，暂时阻塞等待这个jalr的重定向
         insert_error(ifu_errors, SimError::invalidpc, fetch->startpc, fetch->endpc, 1);
         return;
     }
 
-    bpu->apl_redirect(nextpc, hist, brout?(fetch->ras):fetch->ras2);
+    // 更新RAS
+    RASSnapShot ras = fetch->ras;
+    if(!brout && (fetch->jmpinfo & FETCH_FLAG_CALL)) {
+        ras.push(fetch->endpc);
+    }
+    else if(!brout && (fetch->jmpinfo & FETCH_FLAG_RET)) {
+        ras.pop();
+    }
+
+    bpu->apl_redirect(nextpc, hist, ras);
 
     fetch_result_queue->clear();
     pdec_result_queue->clear(); // 这两个队列里的指针是从ftq中取的，都在ftq里有，所以不用额外释放
@@ -700,7 +719,7 @@ void XiangShanCPU::_cur_decode() {
         RV64InstDecoded dec;
         XSInst *inst = inst_buffer->top();
         bool res = isa::decode_rv64(inst->inst, &dec);
-        if(!res) {
+        if(!res) [[unlikely]] {
             insert_error(dec_errors, SimError::illegalinst, inst->pc, inst->inst, 0);
             break;
         }
@@ -732,7 +751,7 @@ void XiangShanCPU::_cur_decode() {
 
         inst_buffer->pass_to(*dec_to_rnm);
 
-        if(inst->flag & RVINSTFLAG_UNIQUE) unique_inst_in_pipeline = true;
+        if(inst->flag & RVINSTFLAG_UNIQUE) [[unlikely]] unique_inst_in_pipeline = true;
 
     }
 }
@@ -753,7 +772,7 @@ void XiangShanCPU::_cur_rename() {
         if(inst->flag & RVINSTFLAG_S2INT) inst->prs[1] = irnm.table[inst->vrs[1]];
         else if(inst->flag & RVINSTFLAG_S2FP) inst->prs[1] = frnm.table[inst->vrs[1]];
         else inst->prs[1] = 0;
-        if(inst->flag & RVINSTFLAG_S3FP) inst->prs[2] = frnm.table[inst->vrs[2]];
+        if(inst->flag & RVINSTFLAG_S3FP) [[unlikely]] inst->prs[2] = frnm.table[inst->vrs[2]];
         else inst->prs[2] = 0;
         if((inst->flag & RVINSTFLAG_RDINT) && inst->vrd) {
             inst->prd = irnm.freelist.front();
@@ -805,7 +824,7 @@ void XiangShanCPU::_cur_dispatch() {
     while(rnm_to_disp->can_pop() && rob.size() + apl_rob_push.size() < param.rob_size && dq_int->can_push() && dq_ls->can_push() && dq_fp->can_push()) {
         XSInst *inst = rnm_to_disp->top();
 
-        if(inst->opcode == RV64OPCode::system) {
+        if(inst->opcode == RV64OPCode::system) [[unlikely]] {
             // CSR，ECALL，EBREAK指令直接等提交阶段完成，不加入dispath队列
             inst->finished = true;
             rnm_to_disp->pop();
@@ -867,7 +886,7 @@ void XiangShanCPU::decdisp_on_current_tick() {
 
 void XiangShanCPU::cur_commit() {
     dead_loop_detact_tick++;
-    if(dead_loop_detact_tick == dead_loop_warn_tick) {
+    if(dead_loop_detact_tick == dead_loop_warn_tick) [[unlikely]] {
         sprintf(log_buf, "CPU%d: %ld ticks without inst commited", cpu_id, dead_loop_warn_tick);
         LOG(WARNING) << log_buf;
     }
@@ -893,6 +912,7 @@ void XiangShanCPU::cur_commit() {
 
         if(inst->opcode == RV64OPCode::branch) {
             statistic.br_inst_cnt ++;
+            if(inst->vrs[0] == 1) statistic.ret_inst_cnt ++;
             bool istaken = (inst->arg0 != 0);
             uint16_t instoff = inst->pc - fetch->startpc;
             uint16_t bridx = 0;
@@ -919,6 +939,7 @@ void XiangShanCPU::cur_commit() {
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
                 statistic.br_pred_hit_cnt++;
+                if(inst->vrs[0] == 1) statistic.ret_pred_hit_cnt ++;
             }
         }
         else if(inst->opcode == RV64OPCode::jalr) {
@@ -991,7 +1012,7 @@ void XiangShanCPU::cur_commit() {
         }
         #undef PERR
 
-        if(update_rename) {
+        if(update_rename) [[likely]] {
             if((inst->flag & RVINSTFLAG_RDINT) && inst->vrd) {
                 ireg.apl_wb[inst->prd] = inst->arg0;
                 irnm.freelist.push_back(inst->prstale);
@@ -1005,7 +1026,7 @@ void XiangShanCPU::cur_commit() {
             statistic.finished_inst_cnt++;
         }
 
-        if(inst->flag & RVINSTFLAG_UNIQUE) {
+        if(inst->flag & RVINSTFLAG_UNIQUE) [[unlikely]] {
             unique_inst_in_pipeline = false;
             commit_finished = true;
         }
@@ -1043,7 +1064,7 @@ void XiangShanCPU::cur_commit() {
             }
         }
 
-        if(dealloc_inst) {
+        if(dealloc_inst) [[likely]] {
             delete inst;
 
             fetch->commit_cnt++;
@@ -1236,7 +1257,7 @@ void XiangShanCPU::_do_reg_read(XSInst *inst, DispType disp) {
         }
     }
 
-    if(s3_fp) {
+    if(s3_fp) [[unlikely]] {
         if(!(*pready3 = _do_try_get_reg(rs3, RVRegType::f, ps3))) {
             WaitOPRand tmp{.wb_ready = pready3, .wb_value = ps3};
             freg_waits->push_next_tick(rs3, tmp);
@@ -1372,7 +1393,7 @@ void XiangShanCPU::cur_mem_disp2() {
         XSInst *inst = dq_ls->top();
         RV64OPCode opcode = inst->opcode;
 
-        if(!rs_amo->empty() || !rs_fence->empty()) {
+        if(!rs_amo->empty() || !rs_fence->empty()) [[unlikely]] {
             return;
         }
 
@@ -1385,13 +1406,13 @@ void XiangShanCPU::cur_mem_disp2() {
             simroot_assert(rs_sta->push_next_tick(inst));
             simroot_assert(rs_std->push_next_tick(inst));
         }
-        else if(opcode == RV64OPCode::amo) {
+        else if(opcode == RV64OPCode::amo) [[unlikely]] {
             simroot_assert(rs_amo->push_next_tick(inst));
         }
-        else if(opcode == RV64OPCode::miscmem) {
+        else if(opcode == RV64OPCode::miscmem) [[unlikely]] {
             simroot_assert(rs_fence->push_next_tick(inst));
         }
-        else {
+        else [[unlikely]] {
             simroot_assert(0);
         }
 
@@ -1460,7 +1481,7 @@ void XiangShanCPU::_apl_general_cpu_redirect(XSInst *inst, VirtAddrT nextpc) {
     // 恢复分支预测现场
     FTQEntry * fetch = inst->ftq;
     BrHist bhr = fetch->bhr;
-    RASSnapshot &ras = fetch->ras;
+    RASSnapShot ras = fetch->ras;
     uint16_t instoff = inst->pc - fetch->startpc;
     for(auto &br : fetch->branchs) {
         if(br.inst_offset < instoff) bhr.push(false);
@@ -1468,8 +1489,11 @@ void XiangShanCPU::_apl_general_cpu_redirect(XSInst *inst, VirtAddrT nextpc) {
     if(inst->opcode == RV64OPCode::branch) {
         bhr.push(inst->arg0 != 0);
     }
-    else if(inst->opcode == RV64OPCode::jalr) {
-        ras = fetch->ras2;
+    else if((inst->opcode == RV64OPCode::jalr || inst->opcode == RV64OPCode::jal) && inst->vrd == 1) {
+        ras.push((inst->flag & RVINSTFLAG_RVC)?(inst->pc+2):(inst->pc+4));
+    }
+    else if(inst->opcode == RV64OPCode::jalr && inst->vrs[0] == 1) {
+        ras.pop();
     }
     
     bpu->apl_redirect(nextpc, bhr, ras);
