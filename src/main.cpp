@@ -93,7 +93,8 @@ int main(int argc, char* argv[]) {
     }
 
     if(parsed_args.configs.empty()) {
-        conf::load_ini_file("../conf/default.ini");
+        std::cout << "No config file specified, use default." << std::endl;
+        conf::load_ini_file("conf/default.ini");
     }
     else {
         for(auto &s : parsed_args.configs) {

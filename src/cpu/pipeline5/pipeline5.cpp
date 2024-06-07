@@ -18,7 +18,7 @@ namespace cpup5 {
 
 void PipeLine5CPU::init_all() {
 
-    if(conf::get_int("cpu", "log_pipeline_to_stdout", 0)) {
+    if(conf::get_int("pipeline5", "log_pipeline_to_stdout", 0)) {
         log_info = true;
         sprintf(log_buf, "CPU %d Inited", cpu_id);
         simroot::print_log_info(log_buf);
@@ -26,9 +26,9 @@ void PipeLine5CPU::init_all() {
     else {
         log_info = false;
     }
-    log_regs = conf::get_int("cpu", "log_register", 0);
-    log_fregs = conf::get_int("cpu", "log_fp_register", 0);
-    if(conf::get_int("cpu", "log_inst_to_file", 0)) {
+    log_regs = conf::get_int("pipeline5", "log_register", 0);
+    log_fregs = conf::get_int("pipeline5", "log_fp_register", 0);
+    if(conf::get_int("pipeline5", "log_inst_to_file", 0)) {
         sprintf(log_buf, "CPU%d_log.txt", cpu_id);
         log_file_commited_inst = new std::ofstream(log_buf);
     }

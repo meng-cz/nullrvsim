@@ -54,7 +54,7 @@ make -j16
 ### 编译后的内容：
 
 - **build/nullrvsim**: 模拟器的可执行文件
-- **conf/default.ini**: 默认配置文件，可通过命令行参数-c重新指定
+- **build/conf/default.ini**: 默认配置文件，可通过命令行参数-c重新指定
 - **build/rvsrc/ecallproxy/libecallproxy.so**: 用于辅助处理系统调用的rv库文件，如有移动需在conf配置文件中指定
 - **build/example/\***: 用于测试的RV64GC可执行文件与相关数据文件
 
@@ -69,7 +69,7 @@ make -j16
 
 **operation:** 运行项目，目前只有mp_moesi_l1l2这一项，启动src/launch/l1l2.cpp中的内容。其他测试项详见main.cpp。
 
-**-c (可选):** 配置文件ini的路径，默认为../conf/default.ini。
+**-c (可选):** 配置文件ini的路径，默认为conf/default.ini。
 
 **-w :** Workload的ELF文件路径与argv。-w后的所有内容都会作为argv传给模拟程序，其他参数必须在-w之前。
 

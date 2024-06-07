@@ -48,6 +48,8 @@ void load_ini_file(string filepath) {
     }
     std::filesystem::path basedir = fpath.parent_path();
 
+    std::cout << "Load config file: " << fpath.string() << std::endl;
+
     std::ifstream ifile(filepath);
     string line = "";
     string current_section = "";
@@ -80,7 +82,7 @@ void load_ini_file(string filepath) {
             insert_item(current_section, key, value);
         }
         else {
-            LOG(ERROR) << "Failed to load ini file " << filepath;
+            LOG(ERROR) << "Failed to parse ini file " << filepath;
             LOG(ERROR) << "Line: " << line;
             exit(0);
         }

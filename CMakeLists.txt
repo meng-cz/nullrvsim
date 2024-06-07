@@ -15,6 +15,8 @@ file(GLOB_RECURSE ALL_CXX_SRC
         src/*.cpp
         )
 
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/conf/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/conf/ FILES_MATCHING PATTERN "*.ini")
+
 add_executable(nullrvsim ${ALL_CXX_SRC})
 
 add_subdirectory(rvsrc/ecallproxy)
