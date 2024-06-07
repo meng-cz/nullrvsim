@@ -912,7 +912,6 @@ void XiangShanCPU::cur_commit() {
 
         if(inst->opcode == RV64OPCode::branch) {
             statistic.br_inst_cnt ++;
-            if(inst->vrs[0] == 1) statistic.ret_inst_cnt ++;
             bool istaken = (inst->arg0 != 0);
             uint16_t instoff = inst->pc - fetch->startpc;
             uint16_t bridx = 0;
@@ -939,13 +938,14 @@ void XiangShanCPU::cur_commit() {
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
                 statistic.br_pred_hit_cnt++;
-                if(inst->vrs[0] == 1) statistic.ret_pred_hit_cnt ++;
             }
         }
         else if(inst->opcode == RV64OPCode::jalr) {
             statistic.jalr_inst_cnt++;
             VirtAddrT predtarget = fetch->jmptarget;
             VirtAddrT jmptarget = inst->arg1;
+            bool isret = (fetch->jmpinfo & FETCH_FLAG_RET);
+            if(isret) statistic.ret_inst_cnt++;
             if(predtarget != jmptarget) {
                 control.jmp_redirect.valid = true;
                 control.jmp_redirect.data = inst;
@@ -958,6 +958,7 @@ void XiangShanCPU::cur_commit() {
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
                 statistic.jalr_pred_hit_cnt++;
+                if(isret) statistic.ret_pred_hit_cnt++;
             }
             simroot_assert(fetch->commit_cnt + 1 == fetch->insts.size());
             fetch->jmptarget = jmptarget;
