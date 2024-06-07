@@ -177,7 +177,7 @@ void RVThread::elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs,
     VirtAddrT interp_load_addr = 0;
     const char *interp_str = nullptr;
 
-    // 设置动态elf的默认加载位置
+    // 设置PIT ELF的默认加载位置
     if(reader.get_type() == ET_DYN) {
         raw_pgtable->brk_va = elf_load_addr = MIN_VADDR;
         elf_entry += elf_load_addr;
@@ -228,10 +228,10 @@ void RVThread::elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs,
 
     // 加载interp elf
     if(interp_str) {
-        if(reader.get_type() != ET_DYN) {
-            LOG(ERROR) << "Un-supposed INTERP segment in a STATIC ELF file: " << param.file_path;
-            assert(0);
-        }
+        // if(reader.get_type() != ET_DYN) {
+        //     LOG(ERROR) << "Un-supposed INTERP segment in a STATIC ELF file: " << param.file_path;
+        //     assert(0);
+        // }
 
         std::filesystem::path interp_path(interp_str);
         std::string interp_filename = interp_path.filename();
