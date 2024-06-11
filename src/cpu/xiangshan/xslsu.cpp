@@ -199,11 +199,33 @@ void LSU::apply_next_tick() {
     load_queue.apply_next_tick();
     store_queue.apply_next_tick();
 
+    for(auto inst : apl_st_addr_ready) {
+        inst->rsready[2] = true;
+    }
+    apl_st_addr_ready.clear();
+
+    for(auto inst : apl_ll_reorder_check) {
+        _ld_reorder_check(inst->id, inst->arg2, isa::rv64_ls_width_to_length(inst->param.loadstore), SimError::llreorder);
+    }
+    for(auto inst : apl_sl_reorder_check) {
+        _ld_reorder_check(inst->id, inst->arg2, isa::rv64_ls_width_to_length(inst->param.loadstore), SimError::slreorder);
+    }
+    apl_ll_reorder_check.clear();
+    apl_sl_reorder_check.clear();
+
+    for(auto inst : apl_ld_finish) {
+        LineIndexT lindex = (inst->arg2 >> CACHE_LINE_ADDR_OFFSET);
+        wait_writeback_load.emplace_back(inst);
+        finished_load.emplace(lindex, inst);
+    }
+    apl_ld_finish.clear();
+
     // LSU每周期可以提交4条指令到ROB，一般不会占满，所以不考虑等待了
     for(auto inst : apl_inst_finished) {
         inst->finished = true;
     }
     apl_inst_finished.clear();
+
 }
 
 void LSU::apl_clear_pipeline() {
@@ -214,16 +236,21 @@ void LSU::apl_clear_pipeline() {
     ld_waiting.clear();
     st_bypass.clear();
     apl_st_bypass.clear();
+    ld_refire_queue.clear();
     ldq_total_size = 0;
     list<std::pair<LineIndexT, LDQEntry*>> tofree_ldq;
     load_queue.clear(&tofree_ldq);
     for(auto &entry : tofree_ldq) {
         delete entry.second;
     }
+    apl_ld_finish.clear();
     wait_writeback_load.clear();
     finished_load.clear();
     store_queue.clear();
+    apl_st_addr_ready.clear();
     apl_inst_finished.clear();
+    apl_ll_reorder_check.clear();
+    apl_sl_reorder_check.clear();
     std::list<CacheOP*> tofree;
     io_dcache_port->clear_ld(&tofree);
     io_dcache_port->clear_amo(&tofree);
@@ -338,6 +365,10 @@ bool LSU::cur_commit_amo(XSInst *inst) {
 */
 void LSU::_cur_get_ld_from_rs() {
     auto &rs = port->ld->get();
+    while(ld_addr_trans_queue->can_push() && !ld_refire_queue.empty()) {
+        simroot_assert(ld_addr_trans_queue->push(ld_refire_queue.front()));
+        ld_refire_queue.pop_front();
+    }
     while(ld_addr_trans_queue->can_push() && !rs.empty()) {
         auto iter = rs.begin();
         for( ; iter != rs.end(); iter++) {
@@ -389,10 +420,9 @@ void LSU::_cur_ld_addr_trans() {
             inst->err = SimError::success;
 
             // load-load违例检查
-            _ld_reorder_check(inst->id, inst->arg2, len, SimError::llreorder);
+            apl_ll_reorder_check.push_back(inst);
 
-            wait_writeback_load.emplace_back(inst);
-            finished_load.emplace(vaddr >> CACHE_LINE_ADDR_OFFSET, inst);
+            apl_ld_finish.push_back(inst);
             ldq_total_size++;
         }
         else {
@@ -420,7 +450,7 @@ void LSU::_cur_ld_addr_trans() {
                 continue;
             }
             // load-load违例检查
-            _ld_reorder_check(inst->id, inst->arg2, len, SimError::llreorder);
+            apl_ll_reorder_check.push_back(inst);
         }
 
         if(debug_ofile) {
@@ -440,8 +470,8 @@ void LSU::_do_store_bypass(XSInstID inst_id, LineIndexT lindex, uint32_t offset,
     if(debug_ofile) {
         memcpy(&_dbg_previous, buf, len);
     }
-    if(res != st_bypass.end()) {
-        list<STByPass> &bps = res->second;
+    if(res2 != commited_st_bypass.end()) {
+        list<STByPass> &bps = res2->second;
         for(auto &bp : bps) {
             if(inst_later_than(bp.inst_id, inst_id)) break;
             int32_t dst_off = offset, dst_len = len, src_off = bp.offset, src_len = bp.len;
@@ -455,8 +485,8 @@ void LSU::_do_store_bypass(XSInstID inst_id, LineIndexT lindex, uint32_t offset,
             }
         }
     }
-    if(res2 != commited_st_bypass.end()) {
-        list<STByPass> &bps = res2->second;
+    if(res != st_bypass.end()) {
+        list<STByPass> &bps = res->second;
         for(auto &bp : bps) {
             if(inst_later_than(bp.inst_id, inst_id)) break;
             int32_t dst_off = offset, dst_len = len, src_off = bp.offset, src_len = bp.len;
@@ -529,8 +559,7 @@ void LSU::_cur_load_queue() {
             else {
                 e.inst->arg0 = _signed_extension(e.data.data(), e.inst->param.loadstore);
                 e.inst->err = SimError::success;
-                wait_writeback_load.emplace_back(e.inst);
-                finished_load.emplace(lindex, e.inst);
+                apl_ld_finish.emplace_back(e.inst);
                 wakeup_insts.emplace_back(e.inst);
                 delete res->second;
                 res = ldq.erase(res);
@@ -576,8 +605,7 @@ void LSU::_cur_load_queue() {
             if(has_error || std::count(e.valid.begin(), e.valid.end(), true) == e.len) {
                 e.inst->err = (has_error?(cop->err):(SimError::success));
                 e.inst->arg0 = _signed_extension(e.data.data(), e.inst->param.loadstore);
-                wait_writeback_load.emplace_back(e.inst);
-                finished_load.emplace(lindex, e.inst);
+                apl_ld_finish.emplace_back(e.inst);
                 delete res->second;
                 res = ldq.erase(res);
             }
@@ -652,15 +680,33 @@ void LSU::_cur_load_queue() {
 void LSU::_ld_reorder_check(XSInstID inst_id, PhysAddrT addr, uint32_t len, SimError errcode) {
     LineIndexT lindex = (addr >> CACHE_LINE_ADDR_OFFSET);
     uint32_t cnt = finished_load.count(lindex);
-    if(cnt == 0) return;
-    auto iter = finished_load.find(lindex);
-    for(int i = 0; i < cnt; i++, iter++) {
-        auto &p2 = iter->second;
-        if(inst_later_than(inst_id, p2->id)) [[likely]] continue;
-        uint32_t len2 = isa::rv64_ls_width_to_length(p2->param.loadstore);
-        if(addr + len <= p2->arg2 || p2->arg2 + len2 <= addr) continue;
-        else p2->err = errcode;
+    if(cnt != 0) {
+        auto iter = finished_load.find(lindex);
+        for(int i = 0; i < cnt; i++, iter++) {
+            auto &p2 = iter->second;
+            if(!inst_later_than(p2->id, inst_id)) [[likely]] continue;
+            uint32_t len2 = isa::rv64_ls_width_to_length(p2->param.loadstore);
+            if(addr + len <= p2->arg2 || p2->arg2 + len2 <= addr) continue;
+            p2->err = errcode;
+        }
     }
+    {
+        auto iter = apl_ld_finish.begin();
+        while(iter != apl_ld_finish.end()) {
+            auto &p2 = *iter;
+            if(lindex != (p2->arg2 >> CACHE_LINE_ADDR_OFFSET)) [[likely]] {iter++; continue;}
+            if(!inst_later_than(p2->id, inst_id)) [[likely]] {iter++; continue;}
+            uint32_t len2 = isa::rv64_ls_width_to_length(p2->param.loadstore);
+            if(addr + len <= p2->arg2 || p2->arg2 + len2 <= addr) {iter++; continue;}
+            // 结果还没有进入流水线，不需要设置err，扔回RS重发
+            p2->rsready[2] = false;
+            ld_refire_queue.push_back(p2);
+            iter = apl_ld_finish.erase(iter);
+            assert(ldq_total_size);
+            ldq_total_size--;
+        }
+    }
+    
 }
 
 /**
@@ -704,7 +750,7 @@ void LSU::_cur_get_std_from_rs() {
         memcpy(tmp.data.data(), &(inst->arg0), tmp.len);
         apl_st_bypass.emplace_back(std::make_pair(inst->arg2 >> CACHE_LINE_ADDR_OFFSET, tmp));
         // store-load违例检查
-        _ld_reorder_check(inst->id, inst->arg2, tmp.len, SimError::slreorder);
+        apl_sl_reorder_check.push_back(inst);
         if(debug_ofile) {
             sprintf(log_buf, "%ld:ST-READY: @0x%lx, %ld, %s", simroot::get_current_tick(), inst->pc, inst->id, inst->dbgname.c_str());
             simroot::log_line(debug_ofile, log_buf);
@@ -732,7 +778,7 @@ void LSU::_cur_st_addr_trans() {
         }
         inst->err = res;
         if(res == SimError::success) {
-            inst->rsready[2] = true;
+            apl_st_addr_ready.push_back(inst);
         }
         else {
             apl_inst_finished.push_back(inst);

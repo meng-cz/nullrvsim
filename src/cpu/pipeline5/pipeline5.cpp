@@ -113,10 +113,7 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
         bool isji = isa::pdec_get_J_target(inst.inst_raw, &target);
         bool isc = isa::isRVC(inst.inst_raw);
         if(isj) {
-            if(isji && isc) {
-                p1_apply_next_pc = pc + target;
-            }
-            else if(isji) {
+            if(isji) {
                 p1_apply_next_pc = pc + target;
                 p1_result.first = true;
             }

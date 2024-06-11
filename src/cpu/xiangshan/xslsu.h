@@ -125,6 +125,8 @@ protected:
     std::map<LineIndexT, list<STByPass>> commited_st_bypass;
     void _do_store_bypass(XSInstID inst_id, LineIndexT lindex, uint32_t offset, uint32_t len, uint8_t *buf, vector<bool> *setvalid);
 
+    list<XSInst*> ld_refire_queue;
+
     typedef struct {
         XSInst *        inst = nullptr;
         uint32_t        offset = 0;
@@ -135,6 +137,7 @@ protected:
     } LDQEntry;
     uint64_t ldq_total_size = 0;
     TickMultiMap<LineIndexT, LDQEntry*> load_queue;
+    list<XSInst*> apl_ld_finish;
     list<XSInst*> wait_writeback_load;
     std::unordered_multimap<LineIndexT, XSInst*> finished_load;
     void _ld_reorder_check(XSInstID inst_id, PhysAddrT addr, uint32_t len, SimError errcode);
@@ -164,7 +167,7 @@ protected:
     }
 
     /**
-     * 从LD保留站中获取一个就绪的指令发射到ld_addr_trans_queue
+     * 从LD保留站或ld_refire_queue中获取一个就绪的指令发射到ld_addr_trans_queue
     */
     void _cur_get_ld_from_rs();
 
@@ -173,6 +176,7 @@ protected:
      * 该阶段完成load-load违例检查，检查finished_load中是否存在比自己晚的同地址的指令，存在则将查到的指令标为llreorder错误。
     */
     void _cur_ld_addr_trans();
+    list<XSInst*> apl_ll_reorder_check;
 
     /**
      * 获取cache当前周期新到达的cacheline，回填到LDQ中
@@ -191,12 +195,14 @@ protected:
      * 该阶段完成store-load违例检查，检查finished_load中是否存在比自己晚的同地址的指令，存在则将查到的指令标为slreorder错误。
     */
     void _cur_get_std_from_rs();
+    list<XSInst*> apl_sl_reorder_check;
 
     /**
      * 从st_addr_trans_queue取出一个指令并进行地址翻译，翻译失败则设置错误后从output输出同时删除STD保留站对应项。
      * 翻译成功则直接丢弃等STD发射。
     */
     void _cur_st_addr_trans();
+    list<XSInst*> apl_st_addr_ready;
 
 // ---------------------------------------------------
 
