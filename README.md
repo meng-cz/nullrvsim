@@ -16,7 +16,7 @@ A Cycle-Driven RISC-V (RV64GC) User-Mode Simulator for Learning Computer Archite
 CPU核心：
 
 - 简单的五级流水线核心
-- 仿照香山三期CPU流水线实现的乱序核心 *（还在测试）*
+- 仿照香山CPU流水线实现的乱序核心 *（还在测试）*
 
 Cache与总线：
 
@@ -39,7 +39,7 @@ Cache与总线：
 
 - 我用的Linux内核版本：**5.15.\*** *（不同的内核版本可能导致主机系统调用接口不同，详细的版本支持信息还需测试）*
 - 编译工具与内核头文件: **gcc, g++, cmake, linux-headers**
-- RV交叉编译工具：**riscv64-linux-gnu-gcc**
+- RV交叉编译工具：**riscv64-linux-gnu-gcc**，或cmake时指定环境变量**CROSS_COMPILE=riscv64-xxx-**
 
 
 ### 编译：
@@ -75,16 +75,6 @@ make -j16
 
 暂时不支持修改模拟进程的环境变量与Aux-Vec。
 
-### 配置模拟CPU核心数
-
-修改conf/default.ini：
-
-```ini
-[multicore]
-cpu_number = 4
-mem_size_mb = 256
-```
-
 ### 运行单线程程序测试：
 
 运行example中静态链接的rv64gc elf文件：
@@ -108,6 +98,15 @@ riscv64-linux-gnu-gcc ../example/helloworld.c -o helloworld.dyn.riscv
 ```
 
 ### 运行pthread多线程程序测试：
+
+配置模拟CPU核心数：
+
+```ini
+; conf/default.ini：
+[multicore]
+cpu_number = 4
+mem_size_mb = 256
+```
 
 ```bash
 # pwd : .../build
