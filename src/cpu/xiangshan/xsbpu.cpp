@@ -395,16 +395,24 @@ void BPU::do_update_br() {
     if(ftb->get_line(p.startpc >> 1, &fetch, true)) {
         fetch->branchs = p.branchs;
         for(int i = 0; i < brcnt; i++) {
-            if(p.is_taken[i]) INC(fetch->branchs[i].pred_taken, 1);
-            else DEC(fetch->branchs[i].pred_taken, -2);
+            if(p.is_taken[i]) {
+                INC(fetch->branchs[i].pred_taken, 1);
+            }
+            else {
+                DEC(fetch->branchs[i].pred_taken, -2);
+            }
         }
         fetch->always_taken = false;
     }
     if(ubtb->get_line((p.startpc >> 1) & ((1UL << ubtb_tag_len) - 1UL), &fetch, true)) {
         fetch->branchs = p.branchs;
         for(int i = 0; i < brcnt; i++) {
-            if(p.is_taken[i]) INC(fetch->branchs[i].pred_taken, 1);
-            else DEC(fetch->branchs[i].pred_taken, -2);
+            if(p.is_taken[i]) {
+                INC(fetch->branchs[i].pred_taken, 1);
+            }
+            else {
+                DEC(fetch->branchs[i].pred_taken, -2);
+            }
         }
         fetch->always_taken = false;
     }
@@ -425,8 +433,12 @@ void BPU::do_update_br() {
         // 更新 sc_bank_thres ，受限制的饱和运算， 若 sc_bank_ctr 更新后的值已达 0b11111 且 sc_bank_thres <= 31，则 sc_bank_thres +=2 若 sc_bank_ctr 更新后的值为 0 且 sc_bank_thres >=6，则 sc_bank_thres -=2 其余情况thres不变。
         // sc_bank_thres 更新判断结束后，会对 sc_bank_ctr 再做一次判断 若更新后的sc_bank_ctr若为0b11111或0，则thres_ctr会被置回初始值0b10000。
         if(update) {
-            if((sum_taken && p.is_taken[i]) || (sum_notaken && !p.is_taken[i])) INC(sc_bank_ctr[i], 31);
-            else DEC(sc_bank_ctr[i], 0);
+            if((sum_taken && p.is_taken[i]) || (sum_notaken && !p.is_taken[i])) {
+                INC(sc_bank_ctr[i], 31);
+            }
+            else {
+                DEC(sc_bank_ctr[i], 0);
+            }
             if(sc_bank_ctr[i] >= 31) { INC(sc_bank_thres[i], 31);INC(sc_bank_thres[i], 31);sc_bank_ctr[i]=16; }
             else if(sc_bank_ctr[i] <= 0) { DEC(sc_bank_thres[i], 0);DEC(sc_bank_thres[i], 0);sc_bank_ctr[i]=16; }
         }
@@ -603,8 +615,12 @@ std::array<int8_t, XSIFU_BRANCH_CNT> BPU::update_tage() {
 
     // T0始终更新：发生跳转（即taken）则 pc 索引的 ctr 饱和计数器 +1，否则 -1
     for(int i = 0; i < p.is_taken.size(); i++) {
-        if(p.is_taken[i]) INC(res.res0->at(i), 1);
-        else DEC(res.res0->at(i), -2);
+        if(p.is_taken[i]) {
+            INC(res.res0->at(i), 1);
+        }
+        else {
+            DEC(res.res0->at(i), -2);
+        }
     }
 
     if(!res.res[0] && !res.res[1] && !res.res[2] && !res.res[3]) {
@@ -624,8 +640,12 @@ std::array<int8_t, XSIFU_BRANCH_CNT> BPU::update_tage() {
             if(res.res[t]) tn = t;
             else continue;
             for(int i = 0; i < p.is_taken.size(); i++) {
-                if(p.is_taken[i]) INC(res.res[t]->pred[i], 7);
-                else DEC(res.res[t]->pred[i], -8);
+                if(p.is_taken[i]) {
+                    INC(res.res[t]->pred[i], 7);
+                }
+                else {
+                    DEC(res.res[t]->pred[i], -8);
+                }
             }
         }
         // 若T0和Tn结果相同
@@ -647,12 +667,16 @@ std::array<int8_t, XSIFU_BRANCH_CNT> BPU::update_tage() {
         if(!t0_eq_tn) {
             if(tn_eq_taken) {
                 INC(res.res[tn]->u, 3);
-                if(tn_weak) DEC(*res.use_alt, -8);
+                if(tn_weak) {
+                    DEC(*res.use_alt, -8);
+                }
             }
             else {
                 DEC(res.res[tn]->u, 0);
                 if(tn < (XS_TAGE_NUM - 1)) _alloc_tage_entry(tn+1, &res, p.is_taken);
-                if(tn_weak) INC(*res.use_alt, 7);
+                if(tn_weak) {
+                    INC(*res.use_alt, 7);
+                }
             }
         }
     }
@@ -704,8 +728,12 @@ std::array<int16_t, XSIFU_BRANCH_CNT> BPU::update_sc() {
 
     for(int n = 0; n < XS_SC_NUM; n++) {
         for(int i = 0; i < p.is_taken.size(); i++) {
-            if(p.is_taken[i]) INC(res.res[n]->at(0), 63);
-            else DEC(res.res[n]->at(0), -64);
+            if(p.is_taken[i]) {
+                INC(res.res[n]->at(0), 63);
+            }
+            else {
+                DEC(res.res[n]->at(0), -64);
+            }
         }
     }
 
@@ -793,7 +821,7 @@ void BPU::update_ittage() {
     simroot_assert(update_reqs.front().type == UpdateBPUField::jalr);
     ITTageIndexRes res;
     auto &p = update_reqs.front();
-    _ittage_indexing(p.bhrbak, update_reqs.front().startpc, &res);
+    _ittage_indexing(p.bhrbak, p.startpc, &res);
     
     list<int32_t> hit_tn;
     for(int i = 0; i < XS_ITTAGE_NUM; i++) {
@@ -806,10 +834,17 @@ void BPU::update_ittage() {
     // 当待更新表项在进行本次预测时的ctr为0时，直接将实际的最终跳转结果存入target，覆盖
     // 如果是在申请新表项，直接将实际的最终跳转结果存入target
     auto update_ittage_entry = [](ITTageEntry *p, VirtAddrT target) -> void {
-        if(p->jmptarget == target) INC(p->u, 3);
+        if(p->jmptarget == target) {
+            INC(p->u, 3);
+        }
         else {
-            if(p->u == 0) p->jmptarget = target;
-            else DEC(p->u, 0);
+            if(p->u == 0) {
+                p->jmptarget = target;
+                p->u = 1;
+            }
+            else {
+                DEC(p->u, 0);
+            }
         }
     };
     if(!hit_tn.empty()) {

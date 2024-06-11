@@ -145,8 +145,8 @@ inline uint64_t rand_long() {
 #define CEIL_DIV(x,y) (((x) + (y) - 1) / (y))
 #define ALIGN(x,y) ((y)*CEIL_DIV((x),(y)))
 #define BOEQ(a, b) ((!(a))==(!(b)))
-#define INC(num, maxv) if(num < maxv) num++
-#define DEC(num, minv) if(num > minv) num--
+#define INC(num, maxv) do { if(num < maxv) num++; } while(0)
+#define DEC(num, minv) do { if(num > minv) num--; } while(0)
 
 inline uint64_t get_current_time_us()
 {
