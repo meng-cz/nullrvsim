@@ -352,6 +352,7 @@ protected:
         uint64_t br_pred_hit_cnt = 0;
         uint64_t jalr_inst_cnt = 0;
         uint64_t jalr_pred_hit_cnt = 0;
+        uint64_t call_inst_cnt = 0;
         uint64_t ret_inst_cnt = 0;
         uint64_t ret_pred_hit_cnt = 0;
 

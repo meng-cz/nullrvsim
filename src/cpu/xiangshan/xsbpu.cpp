@@ -168,7 +168,7 @@ void BPU::on_current_tick() {
     // P2 分支预测
     do_pred();
 
-    // P3 输出，如果预测结果跟uBTB生成的nextpc不同，则需要flush整个BPU
+    // P3 输出，如果BPU流水线没有按照FTB给出的nextpc进行跳转，则需要flush整个BPU
     if(p2_to_p3->can_pop() && ftq->size() <= param->ftq_size) {
         FTQEntry *fetch = p2_to_p3->top();
         p2_to_p3->pop();
@@ -333,20 +333,23 @@ void BPU::do_pred() {
         }
     }   
 
+    bool brout = false;
     for(auto &br : fetch->branchs) {
         bhr.push(br.pred_taken >= 0);
         if(br.pred_taken >= 0) {
+            brout = true;
             break;
         }
     }
 
-    if(jmp & FETCH_FLAG_CALL) {
+    if(!brout && (jmp & FETCH_FLAG_CALL)) {
         fetch->commit_ras = true;
         pred_ras_call(fetch->endpc);
     }
     if(jmp & FETCH_FLAG_JALR) {
-        if(jmp & FETCH_FLAG_RET) {
-            if(fetch->jmptarget = pred_ras_ret()) fetch->commit_ras = true;
+        if(!brout && (jmp & FETCH_FLAG_RET)) {
+            fetch->jmptarget = pred_ras_ret();
+            fetch->commit_ras = true;
         }
         if(fetch->jmptarget == 0) {
             auto ittage_res = pred_ittage(fetch->startpc);

@@ -190,6 +190,7 @@ void XiangShanCPU::print_statistic(std::ofstream &ofile) {
     STATU64(br_pred_hit_cnt);
     STATU64(jalr_inst_cnt);
     STATU64(jalr_pred_hit_cnt);
+    STATU64(call_inst_cnt);
     STATU64(ret_inst_cnt);
     STATU64(ret_pred_hit_cnt);
     LOGTOFILE("\n");
@@ -607,7 +608,15 @@ void XiangShanCPU::_cur_pred_check() {
     statistic.fetch_pack_cnt++;
 
     if(debug_pipeline_ofile) {
-        sprintf(log_buf, "%ld:PDEC: @0x%lx, %ld insts, check:%d", simroot::get_current_tick(), fetch->startpc, fetch->insts.size(), (lencheck && jmpcheck && brcheck)?1:0);
+        string jstr = "";
+        if(fetch->jmpinfo & FETCH_FLAG_JAL) jstr += "ji";
+        if(fetch->jmpinfo & FETCH_FLAG_JALR) jstr += "jr";
+        if(fetch->jmpinfo & FETCH_FLAG_CALL) jstr += "cl";
+        if(fetch->jmpinfo & FETCH_FLAG_RET) jstr += "rt";
+        sprintf(log_buf, "%ld:PDEC: @0x%lx, %ld insts, %ld brs, %s, 0x%lx, check:%d",
+            simroot::get_current_tick(), fetch->startpc, fetch->insts.size(),
+            fetch->branchs.size(), jstr.c_str(), fetch->jmptarget, 
+            (lencheck && jmpcheck && brcheck)?1:0);
         simroot::log_line(debug_pipeline_ofile, log_buf);
     }
     
@@ -910,6 +919,8 @@ void XiangShanCPU::cur_commit() {
         // 正在提交的FetchPackage必须是FTQ程序顺序的第一项
         simroot_assert(fetch == ftq.front());
 
+        if((inst->opcode == RV64OPCode::jalr || inst->opcode == RV64OPCode::jal) && inst->vrd == 1) [[unlikely]] statistic.call_inst_cnt++;
+
         if(inst->opcode == RV64OPCode::branch) {
             statistic.br_inst_cnt ++;
             bool istaken = (inst->arg0 != 0);
@@ -944,8 +955,7 @@ void XiangShanCPU::cur_commit() {
             statistic.jalr_inst_cnt++;
             VirtAddrT predtarget = fetch->jmptarget;
             VirtAddrT jmptarget = inst->arg1;
-            bool isret = (fetch->jmpinfo & FETCH_FLAG_RET);
-            if(isret) statistic.ret_inst_cnt++;
+            if(inst->vrs[0] == 1) statistic.ret_inst_cnt++;
             if(predtarget != jmptarget) {
                 control.jmp_redirect.valid = true;
                 control.jmp_redirect.data = inst;
@@ -958,7 +968,7 @@ void XiangShanCPU::cur_commit() {
                 irnm.checkpoint.erase(inst);
                 frnm.checkpoint.erase(inst);
                 statistic.jalr_pred_hit_cnt++;
-                if(isret) statistic.ret_pred_hit_cnt++;
+                if(inst->vrs[0] == 1) statistic.ret_pred_hit_cnt++;
             }
             simroot_assert(fetch->commit_cnt + 1 == fetch->insts.size());
             fetch->jmptarget = jmptarget;
@@ -1025,11 +1035,11 @@ void XiangShanCPU::cur_commit() {
                 frnm.commited_table[inst->vrd] = inst->prd;
             }
             statistic.finished_inst_cnt++;
-        }
 
-        if(inst->flag & RVINSTFLAG_UNIQUE) [[unlikely]] {
-            unique_inst_in_pipeline = false;
-            commit_finished = true;
+            if(inst->flag & RVINSTFLAG_UNIQUE) [[unlikely]] {
+                unique_inst_in_pipeline = false;
+                commit_finished = true;
+            }
         }
 
         if((log_inst_ofile || log_inst_to_stdout) && update_rename) {

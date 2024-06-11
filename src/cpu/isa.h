@@ -365,7 +365,7 @@ inline bool pdec_isCALLI(RVInstT inst) {
 
 inline bool pdec_isCALLR(RVInstT inst) {
     if(isRVC(inst)) {
-        if((inst & 0x7f) == 2 && ((inst>>12) & 15) == 9 && ((inst >> 7) & 31)) return true;
+        if((inst & 0x7f) == 2 && ((inst>>12) & 15) == 9 && ((inst >> 7) & 31) != 0) return true;
     }
     else {
         if((inst & 0x7F) == OP_JALR && ((inst >> 7) & 31) == 1) return true;
