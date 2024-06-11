@@ -75,6 +75,36 @@ make -j16
 
 暂时不支持修改模拟进程的环境变量与Aux-Vec。
 
+### 常用配置项
+
+build/conf/default.ini:
+```ini
+[root]
+; 模拟器本体的线程数
+thread_num = 1
+; 输出内容（模拟配置与统计信息）所在的目录
+out_dir = out
+; core文件（出错时各模拟组件保存的现场信息）所在的路径
+core_path = core.txt
+
+[workload]
+; 模拟运行的程序的栈大小（单位MB）
+stack_size_mb = 32
+; 运行动态链接elf时用到的rv动态库所在目录
+ld_path = /usr/riscv64-linux-gnu/lib
+
+[sys]
+; 设置模拟的核心类型（现在只能从下面二选一）
+; cpu_type = pipeline5
+cpu_type = xiangshan
+
+[multicore]
+; 模拟的CPU核心数量
+cpu_number = 1
+; 模拟的内存大小
+mem_size_mb = 256
+```
+
 ### 运行单线程程序测试：
 
 运行example中静态链接的rv64gc elf文件：
@@ -85,7 +115,7 @@ make -j16
 
 运行动态链接的elf文件：
 
-修改conf/default.ini，将ldpath设置为ld-linux-riscv64-lp64d.so.1所在目录：
+修改build/conf/default.ini，将ldpath设置为ld-linux-riscv64-lp64d.so.1所在目录：
 ```ini
 [workload]
 ld_path = /usr/riscv64-linux-gnu/lib
@@ -99,10 +129,9 @@ riscv64-linux-gnu-gcc ../example/helloworld.c -o helloworld.dyn.riscv
 
 ### 运行pthread多线程程序测试：
 
-配置模拟CPU核心数：
+在build/conf/default.ini中配置模拟CPU核心数：
 
 ```ini
-; conf/default.ini：
 [multicore]
 cpu_number = 4
 mem_size_mb = 256
