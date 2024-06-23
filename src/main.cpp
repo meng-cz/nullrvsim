@@ -4,6 +4,8 @@
 #include "configuration.h"
 
 #include "bus/simplebus.h"
+#include "bus/routetable.h"
+#include "bus/symmulcha.h"
 
 #include "cache/moesi/test_moesi.h"
 #include "cache/cacheblock.h"
@@ -174,6 +176,13 @@ void execution() {
         TEST(test::test_amo());
     });
 
+    OPERATION(op, "test_bus_route_table", {
+        TEST(test::test_bus_route_table());
+    });
+
+    OPERATION(op, "test_sym_mul_cha_bus", {
+        TEST(test::test_sym_mul_cha_bus());
+    });
 }
 
 

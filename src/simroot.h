@@ -3,7 +3,9 @@
 
 #include "common.h"
 
-#define simroot_assert(expr) {if(!(static_cast <bool> (expr))) { simroot::dump_core(); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
+#define simroot_assert(expr) {if(!(static_cast <bool> (expr))) [[unlikely]] { simroot::dump_core(); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
+
+#define simroot_assertf(expr, fmt, ...) {if(!(static_cast <bool> (expr))) [[unlikely]] { simroot::dump_core(); printf(fmt, ##__VA_ARGS__); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
 
 namespace simroot {
 
