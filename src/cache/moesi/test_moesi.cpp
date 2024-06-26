@@ -1,31 +1,29 @@
 
 #include "test_moesi.h"
 
-#include "l1cache.h"
 #include "lastlevelcache.h"
+#include "l1cachev2.h"
 #include "dmaasl1.h"
+#include "memnode.h"
 
-#include "bus/simplebus.h"
-
-#include "mem/memnode.h"
+#include "bus/symmulcha.h"
+#include "bus/routetable.h"
 
 #include "simroot.h"
 #include "configuration.h"
 
 namespace test {
 
-using simbus::BusInterface;
-using simbus::SimpleBus;
+using simbus::BusInterfaceV2;
+using simbus::SymmetricMultiChannelBus;
 using simbus::BusPortT;
 using simbus::BusPortMapping;
+using simbus::BusRouteTable;
 
-using simcache::CacheCohenrenceMsg;
-using simcache::CCMsgType;
-using simcache::moesi::L1CacheMoesiDirNoi;
-using simcache::moesi::LLCMoesiDirNoi;
+using namespace simcache::moesi;
 
-using simmem::MemoryNode;
-using simmem::MemCtrlLineAddrMap;
+using simcache::MemCtrlLineAddrMap;
+
 
 class TestL1CacheBusMapping : public BusPortMapping {
 public:
@@ -39,10 +37,13 @@ public:
     virtual bool get_downlink_port_index(BusPortT port, uint32_t *out) { return false; };
 };
 
-class TestL1CacheBus : public simbus::BusInterface {
+class TestL1CacheBus : public simbus::BusInterfaceV2 {
 public:
 
-    TestL1CacheBus(uint8_t* psimmem, uint8_t *phostmem) : simmem(psimmem), hostmem(phostmem) { this->debug_log = conf::get_int("l1cache", "debug_log", 0); };
+    TestL1CacheBus(uint8_t* psimmem, uint8_t *phostmem) : simmem(psimmem), hostmem(phostmem) {
+        this->debug_log = conf::get_int("l1cache", "debug_log", 0);
+        recv_queue.resize(CHANNEL_CNT);
+    };
 
     bool debug_log = false;
 
@@ -52,16 +53,19 @@ public:
     virtual uint16_t get_port_num() {return 2;};
     virtual uint16_t get_bus_width() {return CACHE_LINE_LEN_BYTE;};
 
-    virtual bool can_send(BusPortT port) {return true;};
-    virtual bool send(BusPortT port, BusPortT dst_port, CacheCohenrenceMsg msg) {
+    virtual void can_send(BusPortT port, vector<bool> &out) {out.assign(CHANNEL_CNT, true);};
+    virtual bool can_send(BusPortT port, uint32_t channel) {return true;};
+    virtual bool send(BusPortT port, BusPortT dst_port, uint32_t channel, vector<uint8_t> &data) {
+        CacheCohenrenceMsg msg;
+        parse_msg_pack(data, msg);
         LineIndexT lindex = msg.line;
         PhysAddrT addr = line_index_to_line_addr(lindex);
-        if(msg.type == CCMsgType::gets) {
+        if(msg.type == MSG_GETS) {
             msg.data.assign(CACHE_LINE_LEN_BYTE, 0);
             cache_line_copy(msg.data.data(), simmem + addr);
-            msg.type = CCMsgType::gets_resp;
+            msg.type = MSG_GETS_RESP;
             msg.arg = 0;
-            recv_queue.push_back(msg);
+            recv_queue[CHANNEL_RESP].push_back(msg);
             if(debug_log) {
                 printf("sys: send shared line @0x%lx:", lindex);
                 for(int i = 0; i < CACHE_LINE_LEN_BYTE; i++) {
@@ -70,12 +74,12 @@ public:
                 printf("\n");
             }
         }
-        else if(msg.type == CCMsgType::getm) {
+        else if(msg.type == MSG_GETM) {
             msg.data.assign(CACHE_LINE_LEN_BYTE, 0);
             cache_line_copy(msg.data.data(), simmem + addr);
-            msg.type = CCMsgType::getm_resp;
+            msg.type = MSG_GETM_RESP;
             msg.arg = 1;
-            recv_queue.push_back(msg);
+            recv_queue[CHANNEL_RESP].push_back(msg);
             if(debug_log) {
                 printf("sys: send modified line @0x%lx:", lindex);
                 for(int i = 0; i < CACHE_LINE_LEN_BYTE; i++) {
@@ -84,7 +88,7 @@ public:
                 printf("\n");
             }
         }
-        else if(msg.type == CCMsgType::putm) {
+        else if(msg.type == MSG_PUTM) {
             uint64_t *host = (uint64_t*)(hostmem + addr);
             uint64_t *sim = (uint64_t*)(simmem + addr);
             assert(msg.data.size() == CACHE_LINE_LEN_BYTE);
@@ -99,14 +103,14 @@ public:
             // for(int i = 0; i < CACHE_LINE_LEN_BYTE / sizeof(uint64_t); i++) {
             //     simroot_assert(host[i] == sim[i]);
             // }
-            msg.type = CCMsgType::put_ack;
+            msg.type = MSG_PUT_ACK;
             msg.data.clear();
-            recv_queue.push_back(msg);
+            recv_queue[CHANNEL_ACK].push_back(msg);
         }
-        else if(msg.type == CCMsgType::pute || msg.type == CCMsgType::puts) {
-            msg.type = CCMsgType::put_ack;
+        else if(msg.type == MSG_PUTE || msg.type == MSG_PUTS) {
+            msg.type = MSG_PUT_ACK;
             msg.data.clear();
-            recv_queue.push_back(msg);
+            recv_queue[CHANNEL_ACK].push_back(msg);
         }
         else {
             printf("Unexpected msg type:%d\n", (int)(msg.type));
@@ -115,22 +119,31 @@ public:
         return true;
     }
 
-    virtual bool can_recv(BusPortT port) {return !recv_queue.empty();};
-    virtual bool recv(BusPortT port, CacheCohenrenceMsg *msg_buf) {
-        if(recv_queue.size()) {
-            *msg_buf = recv_queue.front();
-            recv_queue.pop_front();
+    virtual void can_recv(BusPortT port, vector<bool> &out) {
+        out.assign(CHANNEL_CNT, false);
+        for(uint32_t c = 0; c < CHANNEL_CNT; c++) {
+            out[c] = (!(recv_queue[c].empty()));
+        }
+    }
+    virtual bool can_recv(BusPortT port, uint32_t channel) {return !recv_queue[channel].empty();};
+    virtual bool recv(BusPortT port, uint32_t channel, vector<uint8_t> &buf) {
+        if(recv_queue[channel].size()) {
+            buf.clear();
+            construct_msg_pack(recv_queue[channel].front(), buf);
+            recv_queue[channel].pop_front();
             return true;
         }
         return false;
     };
 
-    std::list<CacheCohenrenceMsg> recv_queue;
+    vector<list<CacheCohenrenceMsg>> recv_queue;
 };
 
 
 
 bool test_moesi_l1_cache() {
+    simcache::CacheParam param;
+
     uint64_t memsz = 1024UL * 1024UL * 16UL;
 
     uint8_t *hostmem = new uint8_t[memsz];
@@ -142,7 +155,12 @@ bool test_moesi_l1_cache() {
     TestL1CacheBus bus(simmem, hostmem);
 
     TestL1CacheBusMapping busmap;
-    simcache::moesi::L1CacheMoesiDirNoi l1(5, 8, 6, &bus, 1, &busmap, "l1");
+    param.set_offset = 5;
+    param.way_cnt = 8;
+    param.mshr_num = 6;
+    param.index_latency = 2;
+    param.index_width = 1;
+    L1CacheMoesiDirNoiV2 l1(param, &bus, 1, &busmap, "l1");
     simroot::add_sim_object(&l1, "l1", 1);
 
     uint64_t round = 1024UL * 1024UL;
@@ -161,10 +179,10 @@ bool test_moesi_l1_cache() {
 
         while(!succ) {
             if(do_write) {
-                succ = (l1.store(addr, 8, &data) == SimError::success);
+                succ = (l1.store(addr, 8, &data, false) == SimError::success);
             }
             else {
-                succ = (l1.load(addr, 8, &data) == SimError::success);
+                succ = (l1.load(addr, 8, &data, false) == SimError::success);
             }
             l1.on_current_tick();
             l1.apply_next_tick();
@@ -295,7 +313,17 @@ private:
 };
 
 bool test_cache_1l24l1_seq_wr() {
-    SimpleBus *bus = new SimpleBus(6, 32);
+
+    vector<BusPortT> nodes;
+    for(int i = 0; i < 6; i++) {
+        nodes.push_back(i);
+    }
+    vector<uint32_t> cha_width;
+    cha_width.assign(CHANNEL_CNT, 32);
+    BusRouteTable route;
+    simbus::genroute_double_ring(nodes, route);
+
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, cha_width, route, "bus");
 
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
@@ -303,19 +331,32 @@ bool test_cache_1l24l1_seq_wr() {
     MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
 
     BusMapping1L24L1 bus_mapping;
+
+    simcache::CacheParam param;
+    param.set_offset = param.dir_set_offset = 7;
+    param.way_cnt = 8;
+    param.dir_way_cnt = 32;
+    param.mshr_num = 8;
+    param.index_latency = 4;
+    param.index_width = 1;
+
     LLCMoesiDirNoi *l2 = new LLCMoesiDirNoi(
-        7, 8, 7, 24,
+        param,
         bus,
         0,
         &bus_mapping,
         string("l2cache")
     );
 
-    L1CacheMoesiDirNoi *l1s[4];
+    param.set_offset = 5;
+    param.way_cnt = 8;
+    param.mshr_num = 4;
+    param.index_latency = 1;
+    param.index_width = 1;
+    L1CacheMoesiDirNoiV2 *l1s[4];
     for(int i = 0; i < 4; i++) {
-        l1s[i] = new L1CacheMoesiDirNoi(
-            5, 8,
-            4, 
+        l1s[i] = new L1CacheMoesiDirNoiV2(
+            param, 
             bus,
             i+2,
             &bus_mapping,
@@ -406,7 +447,17 @@ bool test_cache_1l24l1_seq_wr() {
 
 bool test_cache_1l24l1_rand_wr() {
 
-    SimpleBus *bus = new SimpleBus(6, 32);
+    vector<BusPortT> nodes;
+    for(int i = 0; i < 6; i++) {
+        nodes.push_back(i);
+    }
+    vector<uint32_t> cha_width;
+    cha_width.assign(CHANNEL_CNT, 32);
+    BusRouteTable route;
+    simbus::genroute_double_ring(nodes, route);
+
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, cha_width, route, "bus");
+
 
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
@@ -414,19 +465,32 @@ bool test_cache_1l24l1_rand_wr() {
     MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
 
     BusMapping1L24L1 bus_mapping;
+    
+    simcache::CacheParam param;
+    param.set_offset = param.dir_set_offset = 7;
+    param.way_cnt = 8;
+    param.dir_way_cnt = 32;
+    param.mshr_num = 8;
+    param.index_latency = 4;
+    param.index_width = 1;
+
     LLCMoesiDirNoi *l2 = new LLCMoesiDirNoi(
-        7, 8, 7, 24,
+        param,
         bus,
         0,
         &bus_mapping,
         string("l2cache")
     );
 
-    L1CacheMoesiDirNoi *l1s[4];
+    param.set_offset = 5;
+    param.way_cnt = 8;
+    param.mshr_num = 4;
+    param.index_latency = 1;
+    param.index_width = 1;
+    L1CacheMoesiDirNoiV2 *l1s[4];
     for(int i = 0; i < 4; i++) {
-        l1s[i] = new L1CacheMoesiDirNoi(
-            5, 8,
-            4, 
+        l1s[i] = new L1CacheMoesiDirNoiV2(
+            param, 
             bus,
             i+2,
             &bus_mapping,
@@ -459,12 +523,12 @@ bool test_cache_1l24l1_rand_wr() {
     uint8_t *host_mem = new uint8_t[memsz];
     memset(host_mem, 0, memsz);
 
-    auto perform_cache_op = [](L1CacheMoesiDirNoi *c, bool write, uint64_t addr, uint64_t *buf) -> bool {
+    auto perform_cache_op = [](L1CacheMoesiDirNoiV2 *c, bool write, uint64_t addr, uint64_t *buf) -> bool {
         if(write) {
-            return (c->store(addr, 8, buf) == SimError::success);
+            return (c->store(addr, 8, buf, false) == SimError::success);
         }
         else {
-            return (c->load(addr, 8, buf) == SimError::success);
+            return (c->load(addr, 8, buf, false) == SimError::success);
         }
     };
 

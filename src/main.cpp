@@ -3,18 +3,14 @@
 #include "simroot.h"
 #include "configuration.h"
 
-#include "bus/simplebus.h"
 #include "bus/routetable.h"
 #include "bus/symmulcha.h"
 
 #include "cache/moesi/test_moesi.h"
-#include "cache/cacheblock.h"
 
 #include "cpu/isa.h"
 
 #include "sys/syscallmem.h"
-
-#include "test/test_amo.h"
 
 #include "launch/launch.h"
 
@@ -140,10 +136,6 @@ void execution() {
         TEST(test::test_decoder_rv64());
     });
     
-    OPERATION(op, "test_base_cache_block", {
-        TEST(test::test_base_cache_block());
-    });
-    
     OPERATION(op, "test_syscall_memory", {
         TEST(test::test_syscall_memory());
     });
@@ -166,14 +158,6 @@ void execution() {
 
     OPERATION(op, "test_moesi_l1_dma", {
         TEST(test::test_moesi_l1_dma());
-    });
-
-    OPERATION(op, "test_simple_bus", {
-        TEST(test::test_simple_bus());
-    });
-    
-    OPERATION(op, "test_amo", {
-        TEST(test::test_amo());
     });
 
     OPERATION(op, "test_bus_route_table", {

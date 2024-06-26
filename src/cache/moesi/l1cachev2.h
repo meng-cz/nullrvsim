@@ -3,7 +3,8 @@
 
 #include "cache/cacheinterface.h"
 #include "cache/cachecommon.h"
-#include "cache/coherence.h"
+
+#include "protocal.h"
 
 #include "bus/businterface.h"
 
@@ -13,7 +14,7 @@
 namespace simcache {
 namespace moesi {
 
-using simbus::BusInterface;
+using simbus::BusInterfaceV2;
 using simbus::BusPortT;
 using simbus::BusPortMapping;
 
@@ -22,18 +23,29 @@ class L1CacheMoesiDirNoiV2 : public CacheInterfaceV2 {
 public:
 
     L1CacheMoesiDirNoiV2(
-        uint32_t set_addr_offset,
-        uint32_t line_per_set,
-        uint32_t mshr_num,
-        uint32_t query_cycle,
-        uint32_t query_width,
-        BusInterface *bus,
+        CacheParam &param,
+        BusInterfaceV2 *bus,
         BusPortT my_port_id,
         BusPortMapping *busmap,
         string logname
     );
 
     // CacheInterface
+    virtual SimError load(PhysAddrT paddr, uint32_t len, void *buf, bool noblock) {
+        return load(paddr, len, buf);
+    }
+    virtual SimError store(PhysAddrT paddr, uint32_t len, void *buf, bool noblock) {
+        return store(paddr, len, buf);
+    }
+    virtual SimError load_reserved(PhysAddrT paddr, uint32_t len, void *buf);
+    virtual SimError store_conditional(PhysAddrT paddr, uint32_t len, void *buf);
+    virtual uint32_t arrival_line(vector<ArrivalLine> *out) {
+        uint32_t ret = arrivals.size();
+        if(out) out->insert(out->end(), arrivals.begin(), arrivals.end());
+        return ret;
+    }
+
+    // CacheInterfaceV2
     virtual void clear_ld(std::list<CacheOP*> *to_free);
     virtual void clear_st(std::list<CacheOP*> *to_free);
     virtual void clear_amo(std::list<CacheOP*> *to_free);
@@ -62,17 +74,13 @@ protected:
         return store(paddr, len, buf, tmp);
     }
 
-    SimError load_reserved(PhysAddrT paddr, uint32_t len, void *buf);
-
-    SimError store_conditional(PhysAddrT paddr, uint32_t len, void *buf);
-
     SimError amo(PhysAddrT paddr, uint32_t len, void *buf, isa::RV64AMOOP5 amoop);
 
     bool has_recieved = false;
     bool has_processed = false;
     CacheCohenrenceMsg msgbuf;
 
-    BusInterface *bus = nullptr;
+    BusInterfaceV2 *bus = nullptr;
     uint16_t my_port_id = 0;
     BusPortMapping *busmap;
 
@@ -80,34 +88,56 @@ protected:
     std::vector<SimpleTickQueue<CacheOP*>> ld_queues;
     std::vector<SimpleTickQueue<CacheOP*>> st_queues;
     std::vector<SimpleTickQueue<CacheOP*>> amo_queues;
+    std::vector<SimpleTickQueue<CacheOP*>> misc_queues;
 
-    std::list<std::pair<BusPortT, CacheCohenrenceMsg>> send_buf;
+    typedef struct {
+        vector<uint8_t>     msg;
+        BusPortT            dst;
+        uint32_t            cha;
+    } ReadyToSend;
+
+    std::list<ReadyToSend> send_buf;
     uint32_t send_buf_size = 4;
-    inline void push_send_buf(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg) {
+    inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg) {
         send_buf.emplace_back();
-        send_buf.back().first = dst;
-        auto &send = send_buf.back().second;
-        send.type = type;
-        send.line = line;
-        send.arg = arg;
+        auto &send = send_buf.back();
+        send.dst = dst;
+        send.cha = channel;
+        CacheCohenrenceMsg tmp;
+        tmp.type = type;
+        tmp.line = line;
+        tmp.arg = arg;
+        construct_msg_pack(tmp, send.msg);
     }
-    inline void push_send_buf_with_line(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg, uint64_t* linebuf) {
-        push_send_buf(dst, type, line, arg);
-        auto &d = send_buf.back().second.data;
-        d.assign(CACHE_LINE_LEN_BYTE, 0);
-        cache_line_copy(d.data(), linebuf);
+    inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, void* linebuf) {
+        send_buf.emplace_back();
+        auto &send = send_buf.back();
+        send.dst = dst;
+        send.cha = channel;
+        CacheCohenrenceMsg tmp;
+        tmp.type = type;
+        tmp.line = line;
+        tmp.arg = arg;
+        tmp.data.resize(CACHE_LINE_LEN_BYTE);
+        cache_line_copy(tmp.data.data(), linebuf);
+        construct_msg_pack(tmp, send.msg);
     }
 
-    GenericLRUCacheBlock<DefaultCacheLine> block;
+    typedef struct {
+        uint64_t    data[CACHE_LINE_LEN_I64];
+        uint32_t    state;
+    } TagedCacheLine;
 
-    MSHRArray mshrs;
+    unique_ptr<GenericLRUCacheBlock<TagedCacheLine>> block;
+
+    unique_ptr<MSHRArray> mshrs;
 
     void recieve_msg_nolock();
     void handle_received_msg_nolock();
     void send_msg_nolock();
 
     vector<ArrivalLine> newlines;
-    void handle_new_line_nolock(LineIndexT lindex, MSHREntry *mshr, CacheLineState init_state);
+    void handle_new_line_nolock(LineIndexT lindex, MSHREntry *mshr, uint32_t init_state);
 
     bool reserved_address_valid = false;
     PhysAddrT reserved_address = 0;

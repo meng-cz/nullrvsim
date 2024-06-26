@@ -1,25 +1,18 @@
-#ifndef RVSIM_MEMORY_NODE_H
-#define RVSIM_MEMORY_NODE_H
+#ifndef RVSIM_CACHE_MOESI_MEM_NODE_H
+#define RVSIM_CACHE_MOESI_MEM_NODE_H
 
 #include "common.h"
 
+#include "protocal.h"
+
+#include "cache/meminterface.h"
 #include "bus/businterface.h"
 
-#include "cache/coherence.h"
+namespace simcache {
+namespace moesi {
 
-namespace simmem {
-
-using simbus::BusInterface;
+using simbus::BusInterfaceV2;
 using simbus::BusPortT;
-
-using simcache::CacheCohenrenceMsg;
-using simcache::CCMsgType;
-
-class MemCtrlLineAddrMap {
-public:
-    virtual uint64_t get_local_mem_offset(LineIndexT lindex) = 0;
-    virtual bool is_responsible(LineIndexT lindex) = 0;
-};
 
 class MemoryNode : public SimObject {
 
@@ -28,7 +21,7 @@ public:
     MemoryNode(
         uint8_t *memblk,
         MemCtrlLineAddrMap *addr_map,
-        BusInterface *bus,
+        BusInterfaceV2 *bus,
         BusPortT my_port,
         uint32_t dwidth
     );
@@ -39,7 +32,7 @@ protected:
 
     uint8_t *memblk = nullptr;
     MemCtrlLineAddrMap *addr_map = nullptr;
-    BusInterface *bus = nullptr;
+    BusInterfaceV2 *bus = nullptr;
     BusPortT my_port = 0;
     uint32_t dwidth = 0;
 
@@ -56,7 +49,7 @@ protected:
     std::list<MemoryAccessBuf> membufs;
 };
 
-}
+}}
 
 
 #endif

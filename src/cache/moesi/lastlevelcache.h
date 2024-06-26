@@ -3,7 +3,8 @@
 
 #include "cache/cacheinterface.h"
 #include "cache/cachecommon.h"
-#include "cache/coherence.h"
+
+#include "protocal.h"
 
 #include "bus/businterface.h"
 
@@ -13,7 +14,7 @@
 namespace simcache {
 namespace moesi {
 
-using simbus::BusInterface;
+using simbus::BusInterfaceV2;
 using simbus::BusPortMapping;
 using simbus::BusPortT;
 
@@ -21,11 +22,8 @@ class LLCMoesiDirNoi : public SimObject {
 
 public:
     LLCMoesiDirNoi(
-        uint32_t set_addr_offset,
-        uint32_t line_per_set,
-        uint32_t dir_set_addr_offset,
-        uint32_t dir_line_per_set,
-        BusInterface *bus,
+        CacheParam &param,
+        BusInterfaceV2 *bus,
         BusPortT my_port_id,
         BusPortMapping *busmap,
         string logname
@@ -42,9 +40,11 @@ public:
 protected:
     char log_buf[256];
 
-    BusInterface *bus = nullptr;
+    BusInterfaceV2 *bus = nullptr;
     BusPortT my_port_id;
     BusPortMapping *busmap = nullptr;
+
+    uint32_t index_cycle = 4;
 
     std::list<CacheCohenrenceMsg> recv_buf;
     uint32_t recv_buf_size = 4;
@@ -57,13 +57,21 @@ protected:
         bool                    dirty = false;
     } DirEntry;
 
-    GenericLRUCacheBlock<DefaultCacheLine> block;
-    GenericLRUCacheBlock<DirEntry> directory;
+    unique_ptr<GenericLRUCacheBlock<CacheLineT>> block;
+    unique_ptr<GenericLRUCacheBlock<DirEntry>> directory;
 
     typedef struct {
-        CCMsgType       type;
+        vector<uint8_t>     msg;
+        BusPortT            dst;
+        uint32_t            cha;
+    } ReadyToSend;
+
+    typedef struct {
+        uint32_t        type;
         LineIndexT      lindex;
         uint32_t        arg;
+
+        uint32_t        index_cycle;
 
         bool            blk_hit = false;
         uint8_t         line_buf[CACHE_LINE_LEN_BYTE];
@@ -74,34 +82,40 @@ protected:
         bool            blk_replaced = false;
         LineIndexT      lindex_replaced = 0;
 
-        std::list<std::pair<BusPortT, CacheCohenrenceMsg>>   need_send;
+        std::list<ReadyToSend>   need_send;
 
         bool            delay_commit = false;
         bool            dir_evict = false;
 
-        inline void push_send_buf(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg) {
+        inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg) {
             need_send.emplace_back();
-            need_send.back().first = dst;
-            auto &send = need_send.back().second;
-            send.type = type;
-            send.line = line;
-            send.arg = arg;
+            auto &send = need_send.back();
+            send.dst = dst;
+            send.cha = channel;
+            CacheCohenrenceMsg tmp;
+            tmp.type = type;
+            tmp.line = line;
+            tmp.arg = arg;
+            construct_msg_pack(tmp, send.msg);
         }
-        inline void push_send_buf_with_line(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg, uint64_t* linebuf) {
-            push_send_buf(dst, type, line, arg);
-            auto &d = need_send.back().second.data;
-            d.assign(CACHE_LINE_LEN_BYTE, 0);
-            cache_line_copy(d.data(), linebuf);
+        inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, uint8_t* linebuf) {
+            need_send.emplace_back();
+            auto &send = need_send.back();
+            send.dst = dst;
+            send.cha = channel;
+            CacheCohenrenceMsg tmp;
+            tmp.type = type;
+            tmp.line = line;
+            tmp.arg = arg;
+            tmp.data.resize(CACHE_LINE_LEN_BYTE);
+            cache_line_copy(tmp.data.data(), linebuf);
+            construct_msg_pack(tmp, send.msg);
         }
     } RequestPackage;
-
 
     SimpleTickQueue<RequestPackage*> queue_index;
     SimpleTickQueue<RequestPackage*> queue_writeback;
     SimpleTickQueue<RequestPackage*> queue_index_result;
-
-    uint32_t index_current_cycle = 1;
-    uint32_t index_cycle_count = 2;
 
     std::list<RequestPackage*> process_buf;
     uint32_t process_buf_size = 4;

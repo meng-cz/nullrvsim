@@ -70,6 +70,18 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
         nodes[e.second].rxs.push_back(&(edges[alloc]));
         alloc++;
     }
+
+    if(conf::get_int("symmulcha", "log_info_to_file", 0)) {
+        std::filesystem::path logdir(conf::get_str("symmulcha", "logdir", "busdebug"));
+        std::filesystem::create_directory(logdir);
+        int32_t log_linecnt = conf::get_int("symmulcha", "debug_file_line", 0);
+        sprintf(log_buf, "%s.log", name.c_str());
+        std::filesystem::path _fpath = logdir / std::filesystem::path(string(log_buf));
+        log_ofile = simroot::create_log_file(_fpath.string(), log_linecnt);
+    }
+    else {
+        log_ofile = nullptr;
+    }
 }
 
 
@@ -104,10 +116,19 @@ void SymmetricMultiChannelBus::apply_next_tick() {
 
 
 
+void SymmetricMultiChannelBus::can_send(BusPortT port, vector<bool> &out) {
+    auto res = nodes.find(port);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    out.assign(cha_cnt, false);
+    for(uint32_t c = 0; c < cha_cnt; c++) {
+        out[c] = (res->second.send_buf[c].empty());
+    }
+}
+
 bool SymmetricMultiChannelBus::can_send(BusPortT port, ChannelT channel) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
     auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", channel);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &sbuf = res->second.send_buf[channel];
     return (sbuf.empty());
 }
@@ -115,7 +136,7 @@ bool SymmetricMultiChannelBus::can_send(BusPortT port, ChannelT channel) {
 bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT channel, vector<uint8_t> &data) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
     auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", channel);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
 
     list<MsgPack*> &sbuf = res->second.send_buf[channel];
     if(!sbuf.empty()) [[unlikely]] return false;
@@ -139,13 +160,33 @@ bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT c
         pos += cwid;
         sbuf.push_back(p);
     }
+    if(log_ofile) {
+        sprintf(log_buf, "SEND: %x -> %x (%d): len %ld : ", port, dst_port, channel, data.size());
+        uint32_t sz = std::min<uint32_t>(data.size(), 16);
+        string tmp(log_buf);
+        for(uint32_t i = 0; i < sz; i++) {
+            sprintf(log_buf, "%02x ", data[i]);
+            tmp += log_buf;
+        }
+        simroot::log_line(log_ofile, tmp);
+    }
     return true;
+}
+
+void SymmetricMultiChannelBus::can_recv(BusPortT port, vector<bool> &out) {
+    auto res = nodes.find(port);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    out.assign(cha_cnt, false);
+    for(uint32_t c = 0; c < cha_cnt; c++) {
+        list<MsgPack*> &rbuf = res->second.recv_buf[c];
+        out[c] = (!rbuf.empty() && rbuf.size() >= rbuf.front()->pac_cnt);
+    }
 }
 
 bool SymmetricMultiChannelBus::can_recv(BusPortT port, ChannelT channel) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
     auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", channel);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &rbuf = res->second.recv_buf[channel];
     return (!rbuf.empty() && rbuf.size() >= rbuf.front()->pac_cnt);
 }
@@ -153,7 +194,7 @@ bool SymmetricMultiChannelBus::can_recv(BusPortT port, ChannelT channel) {
 bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint8_t> &buf) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
     auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", channel);
+    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &rbuf = res->second.recv_buf[channel];
     if(rbuf.empty() || rbuf.size() < rbuf.front()->pac_cnt) [[unlikely]] return false;
 
@@ -172,6 +213,16 @@ bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint
         rbuf.pop_front();
     }
     buf.resize(len);
+    if(log_ofile) {
+        sprintf(log_buf, "RECV: %x (%d): len %ld : ", port, channel, buf.size());
+        uint32_t sz = std::min<uint32_t>(buf.size(), 16);
+        string tmp(log_buf);
+        for(uint32_t i = 0; i < sz; i++) {
+            sprintf(log_buf, "%02x ", buf[i]);
+            tmp += log_buf;
+        }
+        simroot::log_line(log_ofile, tmp);
+    }
     return true;
 }
 

@@ -1,18 +1,11 @@
 #ifndef RVSIM_CACHE_COMMON_H
 #define RVSIM_CACHE_COMMON_H
 
-#include "coherence.h"
-
 #include "common.h"
 #include "spinlocks.h"
 #include "simroot.h"
 
 namespace simcache {
-
-typedef struct {
-    uint64_t        data[CACHE_LINE_LEN_I64];
-    CacheLineState  state;
-} DefaultCacheLine;
 
 template <typename PayloadT>
 class GenericLRUCacheBlock {
@@ -136,7 +129,7 @@ public:
 typedef struct {
     uint64_t line_buf[CACHE_LINE_LEN_I64];
     
-    CacheMSHRState state = CacheMSHRState::invalid;
+    uint32_t state = 0;
 
     uint8_t get_data_ready = 0;
     uint8_t get_ack_cnt_ready = 0;

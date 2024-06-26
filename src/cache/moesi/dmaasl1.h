@@ -3,8 +3,9 @@
 
 #include "cache/cacheinterface.h"
 #include "cache/cachecommon.h"
-#include "cache/coherence.h"
 #include "cache/dmainterface.h"
+
+#include "protocal.h"
 
 #include "bus/businterface.h"
 
@@ -14,7 +15,7 @@
 namespace simcache {
 namespace moesi {
 
-using simbus::BusInterface;
+using simbus::BusInterfaceV2;
 using simbus::BusPortT;
 using simbus::BusPortMapping;
 
@@ -23,7 +24,7 @@ class DMAL1MoesiDirNoi : public SimDMADevice, public SimObject {
 public:
 
     DMAL1MoesiDirNoi(
-        BusInterface *bus,
+        BusInterfaceV2 *bus,
         BusPortT my_port_id,
         BusPortMapping *busmap
     );
@@ -50,7 +51,7 @@ public:
 
 protected:
 
-    BusInterface *bus = nullptr;
+    BusInterfaceV2 *bus = nullptr;
     uint16_t my_port_id = 0;
     BusPortMapping *busmap;
 
@@ -63,21 +64,37 @@ protected:
     ProcessingDMAReq *current = nullptr;
     std::unordered_map<LineIndexT, ProcessingDMAReq*> wait_lines;
 
-    std::list<std::pair<BusPortT, CacheCohenrenceMsg>> send_buf;
+    typedef struct {
+        vector<uint8_t>     msg;
+        BusPortT            dst;
+        uint32_t            cha;
+    } ReadyToSend;
+
+    std::list<ReadyToSend> send_buf;
     uint32_t send_buf_size = 4;
-    inline void push_send_buf(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg) {
+    inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg) {
         send_buf.emplace_back();
-        send_buf.back().first = dst;
-        auto &send = send_buf.back().second;
-        send.type = type;
-        send.line = line;
-        send.arg = arg;
+        auto &send = send_buf.back();
+        send.dst = dst;
+        send.cha = channel;
+        CacheCohenrenceMsg tmp;
+        tmp.type = type;
+        tmp.line = line;
+        tmp.arg = arg;
+        construct_msg_pack(tmp, send.msg);
     }
-    inline void push_send_buf_with_line(BusPortT dst, CCMsgType type, LineIndexT line, uint32_t arg, uint64_t* linebuf) {
-        push_send_buf(dst, type, line, arg);
-        auto &d = send_buf.back().second.data;
-        d.assign(CACHE_LINE_LEN_BYTE, 0);
-        cache_line_copy(d.data(), linebuf);
+    inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, void* linebuf) {
+        send_buf.emplace_back();
+        auto &send = send_buf.back();
+        send.dst = dst;
+        send.cha = channel;
+        CacheCohenrenceMsg tmp;
+        tmp.type = type;
+        tmp.line = line;
+        tmp.arg = arg;
+        tmp.data.resize(CACHE_LINE_LEN_BYTE);
+        cache_line_copy(tmp.data.data(), linebuf);
+        construct_msg_pack(tmp, send.msg);
     }
 
     MSHRArray mshrs;

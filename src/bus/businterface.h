@@ -3,36 +3,20 @@
 
 #include "common.h"
 
-#include "cache/coherence.h"
-
 namespace simbus {
 
 typedef uint32_t BusPortT;
 typedef uint32_t ChannelT;
 
-using simcache::CacheCohenrenceMsg;
-
 class BusInterfaceV2 : public SimObject {
 public:
+    virtual void can_send(BusPortT port, vector<bool> &out) = 0;
     virtual bool can_send(BusPortT port, ChannelT channel) = 0;
     virtual bool send(BusPortT port, BusPortT dst_port, ChannelT channel, vector<uint8_t> &data) = 0;
 
+    virtual void can_recv(BusPortT port, vector<bool> &out) = 0;
     virtual bool can_recv(BusPortT port, ChannelT channel) = 0;
     virtual bool recv(BusPortT port, ChannelT channel, vector<uint8_t> &buf) = 0;
-};
-
-class BusInterface {
-public:
-    virtual uint16_t get_port_num() = 0;
-    virtual uint16_t get_bus_width() = 0;
-
-    virtual bool can_send(BusPortT port) = 0;
-    virtual bool send(BusPortT port, BusPortT dst_port, CacheCohenrenceMsg msg) = 0;
-
-    // virtual bool send_multi(BusPortT port, std::vector<BusPortT> dst_ports, CacheCohenrenceMsg msg) = 0;
-
-    virtual bool can_recv(BusPortT port) = 0;
-    virtual bool recv(BusPortT port, CacheCohenrenceMsg *msg_buf) = 0;
 };
 
 typedef BusPortT SrcPortT;

@@ -2,6 +2,7 @@
 #define RVSIM_BUS_SYMMETRIC_MULTI_CHANNEL_H
 
 #include "businterface.h"
+#include "simroot.h"
 
 namespace simbus {
 
@@ -24,9 +25,11 @@ public:
         string name
     );
 
+    virtual void can_send(BusPortT port, vector<bool> &out);
     virtual bool can_send(BusPortT port, ChannelT channel);
     virtual bool send(BusPortT port, BusPortT dst_port, ChannelT channel, vector<uint8_t> &data);
 
+    virtual void can_recv(BusPortT port, vector<bool> &out);
     virtual bool can_recv(BusPortT port, ChannelT channel);
     virtual bool recv(BusPortT port, ChannelT channel, vector<uint8_t> &buf);
 
@@ -38,8 +41,6 @@ public:
     virtual void dump_core(std::ofstream &ofile);
 
 protected:
-    string logname;
-    char log_buf[512];
 
     uint32_t cha_cnt = 0;
     uint32_t width = 0;
@@ -89,6 +90,10 @@ protected:
 
     void process_node(NodeInChannel *node);
     void process_edge(EdgeInChannel *edge);
+
+    string logname;
+    simroot::LogFileT log_ofile = nullptr;
+    char log_buf[512];
 
 };
 

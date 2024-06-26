@@ -68,10 +68,10 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
         if((res1 = io_sys_port->v_to_p(cpu_id, vpc, &ppc, PGFLAG_X)) == SimError::success &&
             (res2 = io_sys_port->v_to_p(cpu_id, vpc2, &ppc2, PGFLAG_X)) == SimError::success
         ) {
-            res1 = io_icache_port->load(ppc, 2, &(inst.inst_raw));
+            res1 = io_icache_port->load(ppc, 2, &(inst.inst_raw), false);
             cache_operation_result_check_error(res1, vpc, vpc, ppc, 2);
             if(res1 == SimError::success) {
-                res2 = io_icache_port->load(ppc2, 2, ((RVCInstT*)(&(inst.inst_raw))) + 1);
+                res2 = io_icache_port->load(ppc2, 2, ((RVCInstT*)(&(inst.inst_raw))) + 1, false);
                 cache_operation_result_check_error(res2, vpc, vpc2, ppc2, 2);
                 if(res2 == SimError::success) {
                     icache_fetched = true;
@@ -420,7 +420,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
         else {
             paddr = mem_trans_check_error(vaddr, PGFLAG_R | PGFLAG_W, inst.pc);
-            SimError res = io_dcache_port->store(paddr, 0, &value);
+            SimError res = io_dcache_port->store(paddr, 0, &value, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 0);
             if(res != SimError::success) {
                 return;
@@ -429,19 +429,19 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             res = SimError::miss;
             if(inst.param.amo.wid == isa::RV64LSWidth::word) {
                 int32_t tmp = 0;
-                res = io_dcache_port->load(paddr, 4, &tmp);
+                res = io_dcache_port->load(paddr, 4, &tmp, false);
                 cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 4);
                 RAW_DATA_AS(previous).i64 = tmp;
             }
             else {
-                res = io_dcache_port->load(paddr, 8, &previous);
+                res = io_dcache_port->load(paddr, 8, &previous, false);
                 cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 8);
             }
             if(res != SimError::success) {
                 return;
             }
             assert(SimError::success == isa::perform_amo_op(inst.param.amo, &stvalue, previous, value));
-            res = io_dcache_port->store(paddr, len, &stvalue);
+            res = io_dcache_port->store(paddr, len, &stvalue, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
                 return;
@@ -463,7 +463,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
         else {
             PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_R, inst.pc);
-            SimError res = io_dcache_port->load(paddr, len, &buf);
+            SimError res = io_dcache_port->load(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
                 return;
@@ -499,7 +499,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
         else {
             PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_W, inst.pc);
-            SimError res = io_dcache_port->store(paddr, len, &buf);
+            SimError res = io_dcache_port->store(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
                 return;

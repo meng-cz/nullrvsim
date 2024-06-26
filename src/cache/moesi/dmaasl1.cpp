@@ -8,7 +8,7 @@ namespace simcache {
 namespace moesi {
 
 DMAL1MoesiDirNoi::DMAL1MoesiDirNoi(
-    BusInterface *bus,
+    BusInterfaceV2 *bus,
     BusPortT my_port_id,
     BusPortMapping *busmap
 ) : bus(bus), my_port_id(my_port_id), busmap(busmap), mshrs(32), push_lock(16) {
@@ -25,62 +25,62 @@ void DMAL1MoesiDirNoi::handle_recv_msg(CacheCohenrenceMsg &msgbuf) {
     simroot_assert(mshr = mshrs.get(lindex));
     bool current_finished = false;
 
-    if(msgbuf.type == CCMsgType::invalid) {
-        push_send_buf(arg, CCMsgType::invalid_ack, lindex, 0);
+    if(msgbuf.type == MSG_INVALID) {
+        push_send_buf(arg, CHANNEL_ACK, MSG_INVALID_ACK, lindex, 0);
     }
-    else if(msgbuf.type == CCMsgType::invalid_ack) {
-        simroot_assert(mshr->state == CacheMSHRState::itom);
+    else if(msgbuf.type == MSG_INVALID_ACK) {
+        simroot_assert(mshr->state == MSHR_ITOM);
         if(mshr->get_ack_cnt_ready == 0 || mshr->need_invalid_ack != mshr->invalid_ack + 1 || mshr->get_data_ready == 0) {
             mshr->invalid_ack++;
         }
         else {
-            push_send_buf(l2_port, CCMsgType::get_ack, lindex, my_port_id);
+            push_send_buf(l2_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
             current_finished = true;
         }
     }
-    else if(msgbuf.type == CCMsgType::gets_forward) {
-        push_send_buf_with_line(arg, CCMsgType::gets_resp, lindex, 1, mshr->line_buf);
+    else if(msgbuf.type == MSG_GETS_FORWARD) {
+        push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETS_RESP, lindex, 1, mshr->line_buf);
     }
-    else if(msgbuf.type == CCMsgType::getm_forward) {
-        push_send_buf_with_line(arg, CCMsgType::getm_resp, lindex, 0, mshr->line_buf);
+    else if(msgbuf.type == MSG_GETM_FORWARD) {
+        push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETM_RESP, lindex, 0, mshr->line_buf);
     }
-    else if(msgbuf.type == CCMsgType::getm_ack) {
-        simroot_assert(mshr->state == CacheMSHRState::itom);
+    else if(msgbuf.type == MSG_GETM_ACK) {
+        simroot_assert(mshr->state == MSHR_ITOM);
         if(arg != mshr->invalid_ack || mshr->get_data_ready == 0) {
             mshr->get_ack_cnt_ready = 1;
             mshr->need_invalid_ack = arg;
         }
         else {
-            push_send_buf(l2_port, CCMsgType::get_ack, lindex, my_port_id);
+            push_send_buf(l2_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
             current_finished = true;
         }
     }
-    else if(msgbuf.type == CCMsgType::gets_resp) {
-        simroot_assert(mshr->state == CacheMSHRState::itos);
+    else if(msgbuf.type == MSG_GETS_RESP) {
+        simroot_assert(mshr->state == MSHR_ITOS);
         cache_line_copy(mshr->line_buf, msgbuf.data.data());
         if(arg > 0) {
-            push_send_buf(l2_port, CCMsgType::get_ack, lindex, my_port_id);
+            push_send_buf(l2_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
         }
         current_finished = true;
     }
-    else if(msgbuf.type == CCMsgType::getm_resp) {
-        simroot_assert(mshr->state == CacheMSHRState::itom);
+    else if(msgbuf.type == MSG_GETM_RESP) {
+        simroot_assert(mshr->state == MSHR_ITOM);
         if(arg == 0 && (mshr->get_ack_cnt_ready == 0 || mshr->need_invalid_ack != mshr->invalid_ack)) {
             cache_line_copy(mshr->line_buf, msgbuf.data.data());
             mshr->get_data_ready = 1;
         }
         else {
-            if(arg == 0) push_send_buf(l2_port, CCMsgType::get_ack, lindex, my_port_id);
+            if(arg == 0) push_send_buf(l2_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
             cache_line_copy(mshr->line_buf, msgbuf.data.data());
             current_finished = true;
         }
     }
-    else if(msgbuf.type == CCMsgType::get_resp_mem) {
-        push_send_buf(l2_port, CCMsgType::get_ack, lindex, my_port_id);
+    else if(msgbuf.type == MSG_GET_RESP_MEM) {
+        push_send_buf(l2_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
         cache_line_copy(mshr->line_buf, msgbuf.data.data());
         current_finished = true;
     }
-    else if(msgbuf.type == CCMsgType::put_ack) {
+    else if(msgbuf.type == MSG_PUT_ACK) {
         auto res = wait_lines.find(lindex);
         assert(res != wait_lines.end());
         ProcessingDMAReq *tofree = res->second;
@@ -114,8 +114,8 @@ void DMAL1MoesiDirNoi::handle_recv_msg(CacheCohenrenceMsg &msgbuf) {
             PhysAddrT target = std::min<PhysAddrT>(lineaddr + CACHE_LINE_LEN_BYTE, req->req.vaddr + req->req.size);
             memcpy(((uint8_t*)(mshr->line_buf)) + offset, req->req.hostptr, target - (lineaddr + offset));
         }
-        push_send_buf_with_line(l2_port, CCMsgType::putm, lindex, my_port_id, mshr->line_buf);
-        mshr->state = CacheMSHRState::mtoi;
+        push_send_buf_with_line(l2_port, CHANNEL_REQ, MSG_PUTM, lindex, my_port_id, mshr->line_buf);
+        mshr->state = MSHR_MTOI;
     }
     else {
         PhysAddrT lineaddr = req->req.dma_pa_to_va(lindex << CACHE_LINE_ADDR_OFFSET);
@@ -129,15 +129,21 @@ void DMAL1MoesiDirNoi::handle_recv_msg(CacheCohenrenceMsg &msgbuf) {
             PhysAddrT target = std::min<PhysAddrT>(lineaddr + CACHE_LINE_LEN_BYTE, req->req.vaddr + req->req.size);
             memcpy(req->req.hostptr, ((uint8_t*)(mshr->line_buf)) + offset, target - (lineaddr + offset));
         }
-        push_send_buf(l2_port, CCMsgType::puts, lindex, my_port_id);
-        mshr->state = CacheMSHRState::stoi;
+        push_send_buf(l2_port, CHANNEL_REQ, MSG_PUTS, lindex, my_port_id);
+        mshr->state = MSHR_STOI;
     }
 }
 
 void DMAL1MoesiDirNoi::on_current_tick() {
     CacheCohenrenceMsg recv;
-    if(bus->recv(my_port_id, &recv)) {
-        handle_recv_msg(recv);
+    vector<uint8_t> buf;
+    for(uint32_t c = 0; c < CHANNEL_CNT; c++) {
+        if(bus->can_recv(my_port_id, c)) {
+            simroot_assert(bus->recv(my_port_id, c, buf));
+            parse_msg_pack(buf, recv);
+            handle_recv_msg(recv);
+            break;
+        }
     }
 
     if(current == nullptr && !dma_req_queue.empty()) {
@@ -164,12 +170,12 @@ void DMAL1MoesiDirNoi::on_current_tick() {
                 assert(busmap->get_uplink_port(lindex, &l2_port));
                 // printf("Request line 0x%lx\n", lindex);
                 if(current->req.type == DMAReqType::host_memory_read) {
-                    mshr->state = CacheMSHRState::itom;
-                    push_send_buf(l2_port, CCMsgType::getm, lindex, my_port_id);
+                    mshr->state = MSHR_ITOM;
+                    push_send_buf(l2_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id);
                 }
                 else {
-                    mshr->state = CacheMSHRState::itos;
-                    push_send_buf(l2_port, CCMsgType::gets, lindex, my_port_id);
+                    mshr->state = MSHR_ITOS;
+                    push_send_buf(l2_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id);
                 }
             }
         }
@@ -178,10 +184,19 @@ void DMAL1MoesiDirNoi::on_current_tick() {
         }
     }
 
-    if(!send_buf.empty() && bus->can_send(my_port_id)) {
-        assert(bus->send(my_port_id, send_buf.front().first, send_buf.front().second));
-        send_buf.pop_front();
+    vector<bool> can_send;
+    bus->can_send(my_port_id, can_send);
+    for(auto iter = send_buf.begin(); iter != send_buf.end(); ) {
+        if(can_send[iter->cha]) {
+            can_send[iter->cha] = false;
+            simroot_assert(bus->send(my_port_id, iter->dst, iter->cha, iter->msg));
+            iter = send_buf.erase(iter);
+        }
+        else {
+            iter++;
+        }
     }
+
 }
 
 }}
