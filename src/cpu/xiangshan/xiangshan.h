@@ -230,6 +230,7 @@ protected:
     typedef struct {
         bool *wb_ready;
         RawDataT *wb_value;
+        XSInst *inst;
     } WaitOPRand;
     unique_ptr<TickMultiMap<PhysReg, WaitOPRand>> ireg_waits;
     unique_ptr<TickMultiMap<PhysReg, WaitOPRand>> freg_waits;
@@ -257,7 +258,8 @@ protected:
         IntFPEXU(uint32_t rsport, uint32_t rscnt, uint32_t unitcnt, string name) : rs(rsport, rscnt), name(name) {
             opunit.resize(unitcnt);
         }
-        LimitedTickList<XSInst*>   rs;
+        // LimitedTickList<XSInst*>   rs;
+        ReserveStation rs;
         vector<OperatingInst> opunit;
         string name;
         inline void apply_next_tick() {

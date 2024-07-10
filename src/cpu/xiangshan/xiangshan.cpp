@@ -320,7 +320,21 @@ void XiangShanCPU::dump_core(std::ofstream &ofile) {
     auto log_exu = [&](IntFPEXU *exu, string name) -> void {
         LOGTOFILE("#%s-RS:\n", name.c_str());
         int i = 0;
-        for(auto &p : exu->rs.get()) {
+        for(auto &p : exu->rs.unready) {
+            if(isa::isRVC(p->inst)) {
+                LOGTOFILE("%d:0x%lx:0x%04x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            else {
+                LOGTOFILE("%d:0x%lx:0x%08x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
+            }
+            i++;
+            if(i % 2 == 0) {
+                LOGTOFILE("\n");
+            }
+        }
+        if(i % 2 == 0) LOGTOFILE("\n");
+        i = 0;
+        for(auto &p : exu->rs.ready) {
             if(isa::isRVC(p->inst)) {
                 LOGTOFILE("%d:0x%lx:0x%04x %s (%d,%d,%d) | ", i, p->pc, p->inst, p->dbgname.c_str(), p->rsready[0], p->rsready[1], p->rsready[2]);
             }
@@ -745,6 +759,7 @@ void XiangShanCPU::_cur_decode() {
         inst->prd = inst->prs[0] = inst->prs[1] = inst->prs[2] = inst->prstale = 0;
         inst->err = SimError::success;
         inst->finished = false;
+        inst->rs = nullptr;
 
         if(debug_pipeline || log_inst_to_file || log_inst_to_stdout) {
             isa::init_rv64_inst_name_str(&dec);
@@ -1149,7 +1164,7 @@ void XiangShanCPU::cur_int_disp2() {
         if(disp_target->rs.can_push() == 0) break;
 
         _do_reg_read(inst, DispType::alu);
-        simroot_assert(disp_target->rs.push_next_tick(inst));
+        disp_target->rs.push_next_tick(inst);
 
         dq_int->pop();
 
@@ -1188,7 +1203,7 @@ void XiangShanCPU::cur_fp_disp2() {
         if(disp_target->rs.can_push() == 0) break;
 
         _do_reg_read(inst, DispType::fp);
-        simroot_assert(disp_target->rs.push_next_tick(inst));
+        disp_target->rs.push_next_tick(inst);
 
         dq_fp->pop();
 
@@ -1239,13 +1254,13 @@ void XiangShanCPU::_do_reg_read(XSInst *inst, DispType disp) {
             *ps1 = 0;
         }
         if(!(*pready1)) {
-            WaitOPRand tmp{.wb_ready = pready1, .wb_value = ps1};
+            WaitOPRand tmp{.wb_ready = pready1, .wb_value = ps1, .inst = inst};
             ireg_waits->push_next_tick(rs1, tmp);
         }
     }
     else if(s1_fp) {
         if(!(*pready1 = _do_try_get_reg(rs1, RVRegType::f, ps1))) {
-            WaitOPRand tmp{.wb_ready = pready1, .wb_value = ps1};
+            WaitOPRand tmp{.wb_ready = pready1, .wb_value = ps1, .inst = inst};
             freg_waits->push_next_tick(rs1, tmp);
         }
     }
@@ -1257,20 +1272,20 @@ void XiangShanCPU::_do_reg_read(XSInst *inst, DispType disp) {
             *ps2 = 0;
         }
         if(!(*pready2)) {
-            WaitOPRand tmp{.wb_ready = pready2, .wb_value = ps2};
+            WaitOPRand tmp{.wb_ready = pready2, .wb_value = ps2, .inst = inst};
             ireg_waits->push_next_tick(rs2, tmp);
         }
     }
     else if(s2_fp) {
         if(!(*pready2 = _do_try_get_reg(rs2, RVRegType::f, ps2))) {
-            WaitOPRand tmp{.wb_ready = pready2, .wb_value = ps2};
+            WaitOPRand tmp{.wb_ready = pready2, .wb_value = ps2, .inst = inst};
             freg_waits->push_next_tick(rs2, tmp);
         }
     }
 
     if(s3_fp) [[unlikely]] {
         if(!(*pready3 = _do_try_get_reg(rs3, RVRegType::f, ps3))) {
-            WaitOPRand tmp{.wb_ready = pready3, .wb_value = ps3};
+            WaitOPRand tmp{.wb_ready = pready3, .wb_value = ps3, .inst = inst};
             freg_waits->push_next_tick(rs3, tmp);
         }
     }
@@ -1322,6 +1337,9 @@ void XiangShanCPU::_cur_wakeup_exu_bypass() {
                 WaitOPRand &entry = res->second;
                 *(entry.wb_ready) = true;
                 *(entry.wb_value) = value;
+                if(entry.inst->rs && inst_ready(entry.inst)) {
+                    ((ReserveStation*)(entry.inst->rs))->wakeup(entry.inst);
+                }
             }
             wait.erase(newreg);
         }
@@ -1338,6 +1356,9 @@ void XiangShanCPU::_cur_wakeup_exu_bypass() {
                 WaitOPRand &entry = res->second;
                 *(entry.wb_ready) = true;
                 *(entry.wb_value) = value;
+                if(entry.inst->rs && inst_ready(entry.inst)) {
+                    ((ReserveStation*)(entry.inst->rs))->wakeup(entry.inst);
+                }
             }
             wait.erase(newreg);
         }
@@ -1349,7 +1370,7 @@ void XiangShanCPU::_cur_wakeup_exu_bypass() {
 */
 void XiangShanCPU::_cur_intfp_exu(IntFPEXU *exu) {
 
-    vector<OperatingInst*> free_units;
+    auto &rs = exu->rs.ready;
     for(auto &unit : exu->opunit) {
         if(unit.inst) {
             unit.processed ++;
@@ -1368,32 +1389,35 @@ void XiangShanCPU::_cur_intfp_exu(IntFPEXU *exu) {
                     simroot_assert(freg.apl_bypass.emplace(unit.inst->prd, unit.inst->arg0).second);
                 }
                 unit.inst = nullptr;
+                if(!rs.empty()) {
+                    auto inst = rs.front();
+                    unit.inst = inst;
+                    unit.processed = 0;
+                    unit.latency = _get_exu_latency(inst);
+                    _do_op_inst(inst);
+                    rs.pop_front();
+                    if(debug_pipeline_ofile) {
+                        sprintf(log_buf, "%ld:%s-START: @0x%lx, %ld, %s, Latency %d",
+                            simroot::get_current_tick(), exu->name.c_str(), inst->pc, inst->id, inst->dbgname.c_str(), unit.latency
+                        );
+                        simroot::log_line(debug_pipeline_ofile, log_buf);
+                    }
+                }
             }
         }
-        if(!unit.inst) {
-            free_units.push_back(&unit);
-        }
-    }
-
-    auto &rs = exu->rs.get();
-    auto iter = rs.begin();
-    for(auto unit : free_units) {
-        for(; iter != rs.end(); iter++) {
-            if(inst_ready(*iter)) break;
-        }
-        if(iter == rs.end()) break;
-        auto inst = *iter;
-        unit->inst = inst;
-        unit->processed = 0;
-        unit->latency = _get_exu_latency(inst);
-        _do_op_inst(inst);
-        iter = rs.erase(iter);
-
-        if(debug_pipeline_ofile) {
-            sprintf(log_buf, "%ld:%s-START: @0x%lx, %ld, %s, Latency %d",
-                simroot::get_current_tick(), exu->name.c_str(), inst->pc, inst->id, inst->dbgname.c_str(), unit->latency
-            );
-            simroot::log_line(debug_pipeline_ofile, log_buf);
+        else if(!rs.empty()) {
+            auto inst = rs.front();
+            unit.inst = inst;
+            unit.processed = 0;
+            unit.latency = _get_exu_latency(inst);
+            _do_op_inst(inst);
+            rs.pop_front();
+            if(debug_pipeline_ofile) {
+                sprintf(log_buf, "%ld:%s-START: @0x%lx, %ld, %s, Latency %d",
+                    simroot::get_current_tick(), exu->name.c_str(), inst->pc, inst->id, inst->dbgname.c_str(), unit.latency
+                );
+                simroot::log_line(debug_pipeline_ofile, log_buf);
+            }
         }
     }
 

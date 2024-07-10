@@ -19,9 +19,15 @@ const uint32_t tage_tag_len[XS_TAGE_NUM] = {8, 8, 8, 8};
 const uint32_t tage_banks = 8;
 const uint32_t tage0_set_bit = 11;
 
+const uint32_t tage_fh0_idx = 0;
+const uint32_t tage_fh1_idx = tage_fh0_idx + XS_TAGE_NUM;
+const uint32_t tage_fh2_idx = tage_fh1_idx + XS_TAGE_NUM;
+
 static_assert(XS_SC_NUM == 4);
 const uint32_t sc_fh_len[XS_SC_NUM] = {0, 4, 8, 8};
 const uint32_t sc_set_bits[XS_SC_NUM] = {9, 9, 9, 9}; // 512
+
+const uint32_t sc_fh_idx = tage_fh2_idx + XS_TAGE_NUM;
 
 static_assert(XS_ITTAGE_NUM == 5);
 const uint32_t ittage_fh0_len[XS_ITTAGE_NUM] = {4, 8, 9, 9, 9};
@@ -31,6 +37,10 @@ const uint32_t ittage_hist_len[XS_ITTAGE_NUM] = {4, 8, 13, 16, 32};
 const uint32_t ittage_set_bits[XS_ITTAGE_NUM] = {8, 8, 9, 9, 9};
 const uint32_t ittage_tag_len[XS_ITTAGE_NUM] = {9, 9, 9, 9, 9};
 const uint32_t ittage_banks = 2;
+
+const uint32_t ittage_fh0_idx = sc_fh_idx + XS_SC_NUM;
+const uint32_t ittage_fh1_idx = ittage_fh0_idx + XS_ITTAGE_NUM;
+const uint32_t ittage_fh2_idx = ittage_fh1_idx + XS_ITTAGE_NUM;
 
 const uint32_t ras_ps_size = 32;
 const uint32_t ras_cs_size = 16;
@@ -84,16 +94,16 @@ void BPU::dump_core(std::ofstream &ofile) {
             LOGTOFILE("\n");
         }
     }
-    LOGTOFILE("\n");
-    {
-        LOGTOFILE("#BPU-BHR: ");
-        uint64_t tmp = bhr.get(64, 64);
-        for(uint64_t i = 0; i < 64; i++) {
-            if(1 & (tmp >> i)) LOGTOFILE("1");
-            else LOGTOFILE("0");
-        }
-        LOGTOFILE("\n");
-    }
+    // LOGTOFILE("\n");
+    // {
+    //     LOGTOFILE("#BPU-BHR: ");
+    //     uint64_t tmp = bhr.get(64, 64);
+    //     for(uint64_t i = 0; i < 64; i++) {
+    //         if(1 & (tmp >> i)) LOGTOFILE("1");
+    //         else LOGTOFILE("0");
+    //     }
+    //     LOGTOFILE("\n");
+    // }
     LOGTOFILE("\n");
     #undef LOGTOFILE
 }
@@ -135,6 +145,24 @@ BPU::BPU(XiangShanParam *param, list<FTQEntry*> *ftq, VirtAddrT pc)
             }
         }
     }
+
+    vector<std::pair<uint32_t, uint32_t>> len2fhlen;
+    len2fhlen.reserve(64);
+    assert(len2fhlen.size() == tage_fh0_idx);
+    for(int i = 0; i < XS_TAGE_NUM; i++) len2fhlen.emplace_back(tage_hist_len[i], tage_fh0_len[i]);
+    assert(len2fhlen.size() == tage_fh1_idx);
+    for(int i = 0; i < XS_TAGE_NUM; i++) len2fhlen.emplace_back(tage_hist_len[i], tage_fh1_len[i]);
+    assert(len2fhlen.size() == tage_fh2_idx);
+    for(int i = 0; i < XS_TAGE_NUM; i++) len2fhlen.emplace_back(tage_hist_len[i], tage_fh2_len[i]);
+    // assert(len2fhlen.size() == sc_fh_idx);
+    // for(int i = 0; i < XS_SC_NUM; i++) len2fhlen.emplace_back(sc_fh_len[i], sc_fh_len[i]);
+    // assert(len2fhlen.size() == ittage_fh0_idx);
+    // for(int i = 0; i < XS_ITTAGE_NUM; i++) len2fhlen.emplace_back(ittage_hist_len[i], ittage_fh0_len[i]);
+    // assert(len2fhlen.size() == ittage_fh1_idx);
+    // for(int i = 0; i < XS_ITTAGE_NUM; i++) len2fhlen.emplace_back(ittage_hist_len[i], ittage_fh1_len[i]);
+    // assert(len2fhlen.size() == ittage_fh2_idx);
+    // for(int i = 0; i < XS_ITTAGE_NUM; i++) len2fhlen.emplace_back(ittage_hist_len[i], ittage_fh2_len[i]);
+    bhr.init(len2fhlen);
 
 }
 
@@ -513,8 +541,8 @@ void BPU::_tage_indexing(BrHist &brhist, VirtAddrT startpc, TageIndexRes* res) {
 #define LOWBIT(num, len) ((num) & ((1UL<<(len))-1UL))
     res->index0 = LOWBIT(branchpc, tage0_set_bit);
     for(int i = 0; i < XS_TAGE_NUM; i++) {
-        res->index[i] = LOWBIT(branchpc ^ brhist.get(tage_hist_len[i], tage_fh0_len[i]), tage_set_bits[i]);
-        res->tag[0] = LOWBIT(branchpc ^ brhist.get(tage_hist_len[i], tage_fh1_len[i]) ^ (brhist.get(tage_hist_len[i], tage_fh2_len[i]) << 1), tage_tag_len[i]);
+        res->index[i] = LOWBIT(branchpc ^ brhist.get(tage_fh0_idx + i), tage_set_bits[i]);
+        res->tag[0] = LOWBIT(branchpc ^ brhist.get(tage_fh1_idx + i) ^ (brhist.get(tage_fh2_idx + i) << 1), tage_tag_len[i]);
     }
     // res->index[0] = LOWBIT(branchpc ^ brhist.get(8, 8), param->tage_set_bits);
     // res->index[1] = LOWBIT(branchpc ^ brhist.get(13, 11), param->tage_set_bits);
@@ -699,7 +727,7 @@ void BPU::_sc_indexing(BrHist &brhist, VirtAddrT startpc, SCIndexRes* res) {
 
 #define LOWBIT(num, len) ((num) & ((1UL<<(len))-1UL))
     for(int i = 0; i < XS_SC_NUM; i++) {
-        res->index[i] = LOWBIT(branchpc ^ brhist.get(sc_fh_len[i], sc_set_bits[i]), sc_set_bits[i]);
+        res->index[i] = LOWBIT(branchpc ^ brhist.get(sc_fh_len[i], sc_fh_len[i]), sc_set_bits[i]);
         res->res[i] = &sc[i][res->index[i]];
     }
 #undef LOWBIT
