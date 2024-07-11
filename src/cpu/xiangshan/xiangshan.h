@@ -133,7 +133,7 @@ protected:
     struct {
         vector<PhysReg>     table;
         list<PhysReg>       freelist;
-        unordered_map<XSInst*, vector<PhysReg>> checkpoint; // 为每个分支指令保存一份映射表，用于分支预测错误的恢复
+        unordered_map<XSInstID, vector<PhysReg>> checkpoint; // 为每个分支指令保存一份映射表，用于分支预测错误的恢复
         vector<PhysReg>     commited_table;
         // 将所有没有被映射到的物理寄存器都放到freelist中
         inline void reset_freelist(PhysReg maxidx) {
@@ -143,15 +143,28 @@ protected:
             freelist.clear();
             for(PhysReg i = 0; i < maxidx; i++) if(!used[i]) freelist.push_back(i);
         }
-        inline void save(XSInst* inst) {
-            checkpoint.emplace(inst, table);
+        inline void save_checkout(XSInst* inst) {
+            checkpoint.emplace(inst->id, table);
+        }
+        inline void free_checkout(XSInst* inst) {
+            // auto res = checkpoint.find(inst->id);
+            // if(res == checkpoint.end()) [[unlikely]] { assert(0); }
+            // delete res->second;
+            checkpoint.erase(inst->id);
+        }
+        inline void clear_checkout() {
+            // for(auto &entry: checkpoint) {
+            //     delete entry.second;
+            // }
+            checkpoint.clear();
+            checkpoint.rehash(32);
         }
         inline void checkout(XSInst* inst) {
-            auto res = checkpoint.find(inst);
-            assert(res != checkpoint.end());
-            table.swap(res->second);
-            checkpoint.clear();
+            auto res = checkpoint.find(inst->id);
+            if(res == checkpoint.end()) [[unlikely]] { assert(0); }
+            table.swap((res->second));
             commited_table = table;
+            clear_checkout();
         }
         inline void init_table(VirtReg vregcnt) {
             table.resize(vregcnt);
@@ -159,6 +172,7 @@ protected:
                 table[i] = i;
             }
             commited_table = table;
+            checkpoint.rehash(32);
         }
     } irnm, frnm;
     struct {

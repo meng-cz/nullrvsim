@@ -814,8 +814,8 @@ void XiangShanCPU::_cur_rename() {
 
         if(inst->opcode == RV64OPCode::branch || inst->opcode == RV64OPCode::jalr) {
             // 保存一份rename表的备份，用于分支预测错误时的重定向
-            irnm.save(inst);
-            frnm.save(inst);
+            irnm.save_checkout(inst);
+            frnm.save_checkout(inst);
         }
 
         dec_to_rnm->pass_to(*rnm_to_disp);
@@ -961,8 +961,8 @@ void XiangShanCPU::cur_commit() {
             }
             else {
                 // 分支指令预测成功，可以释放备份映射表
-                irnm.checkpoint.erase(inst);
-                frnm.checkpoint.erase(inst);
+                irnm.free_checkout(inst);
+                frnm.free_checkout(inst);
                 statistic.br_pred_hit_cnt++;
             }
         }
@@ -980,8 +980,8 @@ void XiangShanCPU::cur_commit() {
             }
             else {
                 // 分支指令预测成功，可以释放备份映射表
-                irnm.checkpoint.erase(inst);
-                frnm.checkpoint.erase(inst);
+                irnm.free_checkout(inst);
+                frnm.free_checkout(inst);
                 statistic.jalr_pred_hit_cnt++;
                 if(inst->vrs[0] == 1) statistic.ret_pred_hit_cnt++;
             }
@@ -1608,10 +1608,10 @@ void XiangShanCPU::_apl_clear_pipeline() {
 
     irnm.table = irnm.commited_table;
     irnm.reset_freelist(param.phys_ireg_cnt);
-    irnm.checkpoint.clear();
+    irnm.clear_checkout();
     frnm.table = frnm.commited_table;
     frnm.reset_freelist(param.phys_freg_cnt);
-    frnm.checkpoint.clear();
+    frnm.clear_checkout();
     
     ireg.apl_clear(param.phys_ireg_cnt);
     freg.apl_clear(param.phys_freg_cnt);

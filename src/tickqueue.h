@@ -240,19 +240,24 @@ public:
             q_bottom = (q_bottom + q2pop) % len;
             pop_sz += q2pop;
             q_sz -= q2pop;
+            if(push_sz) {
+                uint32_t push2pop = std::min<uint32_t>(owid - pop_sz, push_sz);
+                q_bottom = (q_bottom + push2pop) % len;
+                push_bottom = (push_bottom + push2pop) % len;
+                pop_sz += push2pop;
+                push_sz -= push2pop;
+            }
+            uint32_t push2q = std::min<uint32_t>(qsize - q_sz, push_sz);
+            push_bottom = (push_bottom + push2q) % len;
+            q_sz += push2q;
+            push_sz -= push2q;
         }
-        {
+        else if(push_sz && owid > pop_sz) {
             uint32_t push2pop = std::min<uint32_t>(owid - pop_sz, push_sz);
             q_bottom = (q_bottom + push2pop) % len;
             push_bottom = (push_bottom + push2pop) % len;
             pop_sz += push2pop;
             push_sz -= push2pop;
-        }
-        if(qsize) {
-            uint32_t push2q = std::min<uint32_t>(qsize - q_sz, push_sz);
-            push_bottom = (push_bottom + push2q) % len;
-            q_sz += push2q;
-            push_sz -= push2q;
         }
     }
 
