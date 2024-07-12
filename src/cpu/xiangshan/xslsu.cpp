@@ -590,7 +590,10 @@ void LSU::_cur_load_queue() {
         uint8_t *linebuf = cop->data.data();
         bool has_error = (cop->err == SimError::invalidaddr || cop->err == SimError::unaligned || cop->err == SimError::unaccessable);
         uint64_t cnt = ldq.count(lindex);
-        if(cnt == 0) continue;
+        if(cnt == 0) {
+            delete cop;
+            continue;
+        }
         auto res = ldq.find(lindex);
         for(int i = 0; i < cnt; i++) {
             auto &e = *(res->second);
