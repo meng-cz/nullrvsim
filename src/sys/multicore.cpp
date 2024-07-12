@@ -826,35 +826,27 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
         IREG_V(a0) = wake_cnt;
         return pc + 4;
     }
-    else if(futex_op == FUTEX_WAKE) {
-        LOG(ERROR) << "Unknown futex op";
-        assert(0);
-    }
-    else if(futex_op == FUTEX_WAKE_BITSET) {
-        LOG(ERROR) << "Unknown futex op";
-        assert(0);
-    }
     else if(futex_op == FUTEX_REQUEUE) {
-        LOG(ERROR) << "Unknown futex op";
+        LOG(ERROR) << "Unknown futex op " << futex_op;
         assert(0);
     }
     else if(futex_op == FUTEX_CMP_REQUEUE) {
-        LOG(ERROR) << "Unknown futex op";
+        LOG(ERROR) << "Unknown futex op " << futex_op;
         assert(0);
     }
     else if(futex_op == FUTEX_WAKE_OP) {
-        LOG(ERROR) << "Unknown futex op";
+        LOG(ERROR) << "Unknown futex op " << futex_op;
         assert(0);
     }
     else if(futex_op == FUTEX_LOCK_PI) {
-        LOG(ERROR) << "Unknown futex op";
+        LOG(ERROR) << "Unknown futex op " << futex_op;
         assert(0);
     }
     else if(futex_op == FUTEX_UNLOCK_PI) {
-        LOG(ERROR) << "Unknown futex op";
+        LOG(ERROR) << "Unknown futex op " << futex_op;
         assert(0);
     }
-    LOG(ERROR) << "Unknown futex op";
+    LOG(ERROR) << "Unknown futex op " << futex_op;
     assert(0);
     return 0;
 }
@@ -866,11 +858,13 @@ MP_SYSCALL_DEFINE(1113, host_clock_gettime) {
     switch (IREG_V(a0))
     {
     case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
         time_us = simroot::get_sim_time_us();
         break;
     case CLOCK_MONOTONIC:
     case CLOCK_PROCESS_CPUTIME_ID:
     case CLOCK_THREAD_CPUTIME_ID:
+    case CLOCK_MONOTONIC_RAW:
         time_us = simroot::get_current_tick() / (simroot::get_global_freq() / 1000000UL);
         break;
     default:
