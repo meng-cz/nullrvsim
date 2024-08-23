@@ -19,7 +19,8 @@ class SymmetricMultiChannelBus : public BusInterfaceV2 {
 public:
 
     SymmetricMultiChannelBus(
-        vector<BusPortT> &node_ids,
+        vector<BusPortT> &port_ids,
+        vector<BusNodeT> &port_to_node,
         vector<uint32_t> &channels_width_byte,
         BusRouteTable &route,
         string name
@@ -47,13 +48,14 @@ protected:
     uint32_t route_latency = 0;
     uint32_t node_buf_sz = 0;
     uint32_t xmtid_alloc = 0;
-    vector<BusPortT> nodeid;
     vector<uint32_t> cha_widths;
+    unordered_map<BusPortT, BusNodeT> port2node;
     BusRouteTable route;
     
     typedef struct {
         BusPortT        src;
-        BusPortT        tgt;
+        BusPortT        dst;
+        BusNodeT        tgt;
         ChannelT        cha;
         XmitIDT         xmtid;
         uint32_t        len;
@@ -73,22 +75,32 @@ protected:
     } EdgeInChannel;
 
     typedef struct {
-        BusPortT                    myid = 0;
-        unordered_map<DstPortT, EdgeInChannel*> txs;
+        vector<list<MsgPack*>>      recv_buf;
+        vector<list<MsgPack*>>      send_buf;
+    } PortStruct;
+
+    typedef struct {
+        BusNodeT                    myid = 0;
+
+        unordered_map<DstNodeT, EdgeInChannel*> txs;
         vector<EdgeInChannel*>      rxs;
         uint32_t                    rx_ptr = 0;
+
         list<MsgPack*>              xmit_buf;
         uint32_t                    xmit_buf_size = 0;
         list<PipelinedPack>         pipeline;
-        unordered_map<XmitIDT, list<MsgPack*>>  order_buf; // 为了简化模拟，这里将接收缓存设置成无限大，该缓存的实际上限由来源节点的转发速度限制
-        vector<list<MsgPack*>>      recv_buf;
-        vector<list<MsgPack*>>      send_buf;
-    } NodeInChannel;
 
-    unordered_map<BusPortT, NodeInChannel> nodes;
+        unordered_map<XmitIDT, list<MsgPack*>>  order_buf; // 为了简化模拟，这里将接收缓存设置成无限大，该缓存的实际上限由来源节点的转发速度限制
+        
+        unordered_map<BusPortT, PortStruct*> port;
+        unordered_map<BusPortT, PortStruct*>::iterator sd_ptr;
+    } NodeStruct;
+
+    unordered_map<BusNodeT, NodeStruct> nodes;
+    unordered_map<BusPortT, PortStruct> ports;
     vector<EdgeInChannel>   edges;
 
-    void process_node(NodeInChannel *node);
+    void process_node(NodeStruct *node);
     void process_edge(EdgeInChannel *edge);
 
     string logname;

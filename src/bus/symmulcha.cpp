@@ -9,12 +9,13 @@ namespace simbus {
 
 
 SymmetricMultiChannelBus::SymmetricMultiChannelBus(
-    vector<BusPortT> &node_ids,
+    vector<BusPortT> &port_ids,
+    vector<BusNodeT> &port_to_node,
     vector<uint32_t> &channels_width_byte,
     BusRouteTable &route,
     string name
 )
-: nodeid(node_ids), cha_widths(channels_width_byte), route(route), logname(name)
+: cha_widths(channels_width_byte), route(route), logname(name)
 {
 
     width = conf::get_int("symmulcha", "width", 64);
@@ -23,10 +24,21 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
 
     cha_cnt = cha_widths.size();
 
+    set<BusNodeT> nodeid;
+    for(auto n : port_to_node) {
+        nodeid.insert(n);
+    }
+
+    assert(port_ids.size() == port_to_node.size());
+    for(uint32_t i = 0; i < port_ids.size(); i++) {
+        port2node.emplace(port_ids[i], port_to_node[i]);
+    }
+    assert(port2node.size() == port_ids.size());
+
     for(auto src : nodeid) {
         for(auto dst : nodeid) {
             uint32_t max_jmp = nodeid.size();
-            BusPortT cur = src;
+            BusNodeT cur = src;
             for(uint32_t i = 0; i < max_jmp && cur != dst; i++) {
                 auto res1 = route.find(cur);
                 if(res1 == route.end()) break;
@@ -38,24 +50,35 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
         }
     }
 
-    set<std::pair<BusPortT, BusPortT>> all_edges;
+    set<std::pair<BusNodeT, BusNodeT>> all_edges;
     for(auto &e1 : route) {
-        BusPortT src = e1.first;
+        BusNodeT src = e1.first;
         for(auto &e2 : e1.second) {
-            BusPortT dst = e2.first;
-            BusPortT conn = e2.second;
+            BusNodeT dst = e2.first;
+            BusNodeT conn = e2.second;
             all_edges.emplace(src, conn);
             all_edges.emplace(conn, src);
         }
     }
     assert(all_edges.size() % 2 == 0);
 
+
     for(auto n : nodeid) {
-        auto iter = nodes.emplace(n, NodeInChannel()).first;
+        auto iter = nodes.emplace(n, NodeStruct()).first;
         auto &tmp = iter->second;
         tmp.myid = n;
-        tmp.send_buf.resize(cha_cnt);
-        tmp.recv_buf.resize(cha_cnt);
+    }
+
+    for(auto &p2n : port2node) {
+        auto iter = ports.emplace(p2n.first, PortStruct()).first;
+        iter->second.send_buf.resize(cha_cnt);
+        iter->second.recv_buf.resize(cha_cnt);
+        nodes[p2n.second].port.emplace(p2n.first, &(iter->second));
+    }
+
+    for(auto &e : nodes) {
+        auto &n = e.second;
+        n.sd_ptr = n.port.begin();
     }
 
     EdgeInChannel empty_cha;
@@ -117,8 +140,8 @@ void SymmetricMultiChannelBus::apply_next_tick() {
 
 
 void SymmetricMultiChannelBus::can_send(BusPortT port, vector<bool> &out) {
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
     out.assign(cha_cnt, false);
     for(uint32_t c = 0; c < cha_cnt; c++) {
         out[c] = (res->second.send_buf[c].empty());
@@ -127,16 +150,16 @@ void SymmetricMultiChannelBus::can_send(BusPortT port, vector<bool> &out) {
 
 bool SymmetricMultiChannelBus::can_send(BusPortT port, ChannelT channel) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &sbuf = res->second.send_buf[channel];
     return (sbuf.empty());
 }
 
 bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT channel, vector<uint8_t> &data) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
 
     list<MsgPack*> &sbuf = res->second.send_buf[channel];
     if(!sbuf.empty()) [[unlikely]] return false;
@@ -149,7 +172,8 @@ bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT c
     for(uint32_t i = 0; i < pac_cnt; i++) {
         MsgPack *p = new MsgPack();
         p->src = port;
-        p->tgt = dst_port;
+        p->dst = dst_port;
+        p->tgt = port2node[dst_port];
         p->cha = channel;
         p->xmtid = xmt;
         p->len = data.size();
@@ -174,8 +198,8 @@ bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT c
 }
 
 void SymmetricMultiChannelBus::can_recv(BusPortT port, vector<bool> &out) {
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
     out.assign(cha_cnt, false);
     for(uint32_t c = 0; c < cha_cnt; c++) {
         list<MsgPack*> &rbuf = res->second.recv_buf[c];
@@ -185,16 +209,16 @@ void SymmetricMultiChannelBus::can_recv(BusPortT port, vector<bool> &out) {
 
 bool SymmetricMultiChannelBus::can_recv(BusPortT port, ChannelT channel) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &rbuf = res->second.recv_buf[channel];
     return (!rbuf.empty() && rbuf.size() >= rbuf.front()->pac_cnt);
 }
 
 bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint8_t> &buf) {
     simroot_assertf(channel < cha_widths.size(), "Bus: Unknown channel index %d", channel);
-    auto res = nodes.find(port);
-    simroot_assertf(res != nodes.end(), "Bus: Unknown port %d", port);
+    auto res = ports.find(port);
+    simroot_assertf(res != ports.end(), "Bus: Unknown port %d", port);
     list<MsgPack*> &rbuf = res->second.recv_buf[channel];
     if(rbuf.empty() || rbuf.size() < rbuf.front()->pac_cnt) [[unlikely]] return false;
 
@@ -227,7 +251,7 @@ bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint
 }
 
 
-void SymmetricMultiChannelBus::process_node(NodeInChannel *node) {
+void SymmetricMultiChannelBus::process_node(NodeStruct *node) {
     
     MsgPack *recv = nullptr;
     for(int i = 0; i < node->rxs.size(); i++) {
@@ -247,12 +271,22 @@ void SymmetricMultiChannelBus::process_node(NodeInChannel *node) {
         }
     }
 
-    if(!recv) {
-        for(auto &l : node->send_buf) {
+    for(int i = 0; i < node->port.size() && !recv; i++) {
+        PortStruct *p = node->sd_ptr->second;
+        for(auto &l : p->send_buf) {
             if(!l.empty()) {
                 recv = l.front();
                 l.pop_front();
                 break;
+            }
+        }
+        if(recv) {
+            break;
+        }
+        else {
+            node->sd_ptr++;
+            if(node->sd_ptr == node->port.end()) {
+                node->sd_ptr = node->port.begin();
             }
         }
     }
@@ -262,8 +296,9 @@ void SymmetricMultiChannelBus::process_node(NodeInChannel *node) {
             XmitIDT xmt = recv->xmtid;
             ChannelT cha = recv->cha;
             uint32_t cnt = recv->pac_cnt;
+            BusPortT dst = recv->dst;
             if(cnt <= 1) {
-                node->recv_buf[cha].push_back(recv);
+                node->port[dst]->recv_buf[cha].push_back(recv);
             }
             else {
                 auto res = node->order_buf.find(xmt);
@@ -273,7 +308,7 @@ void SymmetricMultiChannelBus::process_node(NodeInChannel *node) {
                 for(; iter != l.end() && (*iter)->pac_idx < recv->pac_idx; iter++) ;
                 l.insert(iter, recv);
                 if(l.size() == recv->pac_cnt) {
-                    node->recv_buf[cha].splice(node->recv_buf[cha].end(), l);
+                    node->port[dst]->recv_buf[cha].splice(node->port[dst]->recv_buf[cha].end(), l);
                     node->order_buf.erase(xmt);
                 }
             }
@@ -326,16 +361,23 @@ namespace test {
 
 using simbus::SymmetricMultiChannelBus;
 using simbus::BusPortT;
+using simbus::BusNodeT;
 using simbus::BusRouteTable;
 
 bool test_sym_mul_cha_bus() {
     
     const uint32_t nodenum = 16;
-    vector<BusPortT> nodes;
-    for(uint32_t i = 0; i < nodenum; i++) nodes.push_back(i);
+    vector<BusPortT> ports;
+    for(uint32_t i = 0; i < nodenum; i++) ports.push_back(i);
+
+    vector<BusNodeT> nodes;
+    for(uint32_t i = 0; i < nodenum / 2; i++) nodes.push_back(i);
+
+    vector<BusNodeT> port2node;
+    for(uint32_t i = 0; i < nodenum; i++) port2node.push_back(i/2);
 
     BusRouteTable routetable;
-    simbus::genroute_mesh2d_xy(nodes, 4, 4, true, routetable);
+    simbus::genroute_mesh2d_xy(nodes, 4, 2, true, routetable);
 
     const uint32_t chanum = 4;
     vector<uint32_t> channel_width;
@@ -355,7 +397,7 @@ bool test_sym_mul_cha_bus() {
     const uint64_t test_cnt = 100000;
     const uint64_t log_interval = 128;
 
-    unique_ptr<SymmetricMultiChannelBus> bus = make_unique<SymmetricMultiChannelBus>(nodes, channel_width, routetable, "testbus");
+    unique_ptr<SymmetricMultiChannelBus> bus = make_unique<SymmetricMultiChannelBus>(ports, port2node, channel_width, routetable, "testbus");
 
     uint32_t send_percent = 20;
 
@@ -367,7 +409,7 @@ bool test_sym_mul_cha_bus() {
         for(int i = 0; i < nodenum; i++) {
             if(send_cnt < test_cnt && RAND(0, 100) < send_percent) {
                 uint32_t cha = RAND(0, chanum);
-                if(bus->can_send(nodes[i], cha)) {
+                if(bus->can_send(ports[i], cha)) {
                     uint32_t sz = ALIGN(RAND(32, 256), 8);
                     uint32_t dst_i = i;
                     while(dst_i == i) dst_i = RAND(0, nodenum);
@@ -376,15 +418,15 @@ bool test_sym_mul_cha_bus() {
                     for(uint32_t n = 0; n < sz; n++) d[n] = RAND(0, 256);
                     *((uint32_t*)(d.data())) = i;
                     trans_table[i][dst_i][cha].emplace_back(d);
-                    assert(bus->send(nodes[i], nodes[dst_i], cha, d));
+                    assert(bus->send(ports[i], ports[dst_i], cha, d));
                     send_cnt++;
                 }
             }
 
             for(uint32_t c = 0; c < chanum; c++) {
-                if(bus->can_recv(nodes[i], c)) {
+                if(bus->can_recv(ports[i], c)) {
                     vector<uint8_t> d;
-                    assert(bus->recv(nodes[i], c, d));
+                    assert(bus->recv(ports[i], c, d));
                     uint32_t src_i = *((uint32_t*)(d.data()));
                     vector<uint8_t> &ref = trans_table[src_i][i][c].front();
                     assert(ref.size() == d.size());

@@ -5,6 +5,7 @@
 
 namespace simbus {
 
+typedef uint32_t BusNodeT; // 一个节点可以有多个端口，同节点不同端口间通讯不需要额外转发
 typedef uint32_t BusPortT;
 typedef uint32_t ChannelT;
 
@@ -19,22 +20,22 @@ public:
     virtual bool recv(BusPortT port, ChannelT channel, vector<uint8_t> &buf) = 0;
 };
 
-typedef BusPortT SrcPortT;
-typedef BusPortT DstPortT;
-typedef unordered_map<SrcPortT, unordered_map<DstPortT, BusPortT>> BusRouteTable;
+typedef BusNodeT SrcNodeT;
+typedef BusNodeT DstNodeT;
+typedef unordered_map<SrcNodeT, unordered_map<DstNodeT, BusNodeT>> BusRouteTable;
 
 class BusRoute {
 public:
-    virtual BusPortT next(BusPortT this_port, BusPortT dst_port) = 0;
+    virtual BusNodeT next(BusNodeT this_port, BusNodeT dst_port) = 0;
 };
 
 class BusPortMapping {
 public:
-    virtual bool get_uplink_port(LineIndexT line, BusPortT *out) = 0;
-    virtual bool get_memory_port(LineIndexT line, BusPortT *out) = 0;
+    virtual bool get_homenode_port(LineIndexT line, BusPortT *out) = 0;
+    virtual bool get_subnode_port(LineIndexT line, BusPortT *out) = 0;
 
-    virtual bool get_downlink_port(uint32_t index, BusPortT *out) = 0;
-    virtual bool get_downlink_port_index(BusPortT port, uint32_t *out) = 0;
+    virtual bool get_reqnode_port(uint32_t index, BusPortT *out) = 0;
+    virtual bool get_reqnode_index(BusPortT port, uint32_t *out) = 0;
 
 };
 
