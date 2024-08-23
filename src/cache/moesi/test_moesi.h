@@ -11,6 +11,12 @@ bool test_moesi_cache_rand();
 
 bool test_moesi_cache_seq();
 
+bool test_moesi_l1l2_cache();
+
+bool test_moesi_cache_l1l2l3_rand();
+
+bool test_moesi_cache_l1l2l3_seq();
+
 }
 
 #endif

@@ -18,7 +18,7 @@ L1CacheMoesiDirNoiV2::L1CacheMoesiDirNoiV2(
     do_on_current_tick = 4;
     do_apply_next_tick = 1;
 
-    mshrs = make_unique<MSHRArray>(param.mshr_num);
+    mshrs = make_unique<MSHRArray<MSHREntry>>(param.mshr_num);
     block = make_unique<GenericLRUCacheBlock<TagedCacheLine>>(param.set_offset, param.way_cnt);
     query_width = param.index_width;
     
@@ -46,7 +46,7 @@ SimError L1CacheMoesiDirNoiV2::load(PhysAddrT paddr, uint32_t len, void *buf, ve
     SizeT offset = (paddr & (CACHE_LINE_LEN_BYTE - 1));
 
     BusPortT l2_port = 0;
-    if(!busmap->get_uplink_port(lindex, &l2_port)) return SimError::invalidaddr;
+    if(!busmap->get_homenode_port(lindex, &l2_port)) return SimError::invalidaddr;
 
     recieve_msg_nolock();
 
@@ -121,7 +121,7 @@ SimError L1CacheMoesiDirNoiV2::store(PhysAddrT paddr, uint32_t len, void *buf, v
     SizeT offset = (paddr & (CACHE_LINE_LEN_BYTE - 1));
 
     BusPortT l2_port = 0;
-    if(!busmap->get_uplink_port(lindex, &l2_port)) return SimError::invalidaddr;
+    if(!busmap->get_homenode_port(lindex, &l2_port)) return SimError::invalidaddr;
 
     recieve_msg_nolock();
 
@@ -272,7 +272,7 @@ void L1CacheMoesiDirNoiV2::handle_received_msg_nolock() {
     uint32_t arg = msgbuf.arg;
 
     BusPortT l2_port = 0;
-    assert(busmap->get_uplink_port(lindex, &l2_port));
+    assert(busmap->get_homenode_port(lindex, &l2_port));
 
     if(msgbuf.type == MSG_INVALID) {
         if(send_buf.size() + 1 > send_buf_size) return;
@@ -507,7 +507,7 @@ void L1CacheMoesiDirNoiV2::handle_new_line_nolock(LineIndexT lindex, MSHREntry *
     }
 
     BusPortT l2_port = 0;
-    assert(busmap->get_uplink_port(lindex, &l2_port));
+    assert(busmap->get_homenode_port(lindex, &l2_port));
 
     newlines.emplace_back();
     newlines.back().lindex = lindex;
@@ -535,7 +535,7 @@ void L1CacheMoesiDirNoiV2::handle_new_line_nolock(LineIndexT lindex, MSHREntry *
     assert(mshr = mshrs->alloc(replaced));
     memcpy(mshr->line_buf, replacedline.data, CACHE_LINE_LEN_BYTE);
 
-    assert(busmap->get_uplink_port(replaced, &l2_port));
+    assert(busmap->get_homenode_port(replaced, &l2_port));
 
     switch (replacedline.state)
     {

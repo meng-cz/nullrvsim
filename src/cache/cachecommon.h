@@ -126,26 +126,14 @@ public:
     }
 };
 
-typedef struct {
-    uint64_t line_buf[CACHE_LINE_LEN_I64];
-    
-    uint32_t state = 0;
-
-    uint8_t get_data_ready = 0;
-    uint8_t get_ack_cnt_ready = 0;
-    uint16_t need_invalid_ack = 0;
-    uint16_t invalid_ack = 0;
-
-    uint64_t log_start_cycle = 0;
-} MSHREntry;
-
+template<typename PayloadT>
 class MSHRArray {
 public:
     MSHRArray(uint16_t num) : max_sz(num) {};
     ~MSHRArray() {};
 
-    MSHREntry *get(LineIndexT lindex) {
-        MSHREntry * ret = nullptr;
+    PayloadT *get(LineIndexT lindex) {
+        PayloadT * ret = nullptr;
         lock.read_lock();
         auto res = hashmap.find(lindex);
         if(res != hashmap.end()) {
@@ -155,20 +143,20 @@ public:
         return ret;
     };
 
-    MSHREntry *alloc(LineIndexT lindex) {
-        MSHREntry * ret = nullptr;
+    PayloadT *alloc(LineIndexT lindex) {
+        PayloadT * ret = nullptr;
         lock.write_lock();
         auto res = hashmap.find(lindex);
         if(res != hashmap.end()) {
             // ret = &(res->second);
         }
         else if(hashmap.size() < max_sz) {
-            hashmap.insert(std::make_pair(lindex, MSHREntry()));
+            hashmap.insert(std::make_pair(lindex, PayloadT()));
             ret = &(hashmap[lindex]);
         }
         lock.write_unlock();
         if(ret) {
-            memset(ret, 0, sizeof(MSHREntry));
+            memset(ret, 0, sizeof(PayloadT));
         }
         return ret;
     }
@@ -186,7 +174,7 @@ public:
     }
 
     uint16_t max_sz = 0;
-    std::unordered_map<LineIndexT, MSHREntry> hashmap;
+    std::unordered_map<LineIndexT, PayloadT> hashmap;
     SpinRWLock lock;
 };
 

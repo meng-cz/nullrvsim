@@ -24,6 +24,23 @@ const uint32_t MSHR_STOI = 6;
 const uint32_t MSHR_ETOI = 7;
 const uint32_t MSHR_OTOM = 8;
 const uint32_t MSHR_OTOI = 9;
+// 以下状态只对作为req node的L2有效
+// const uint32_t MSHR_MTOF = 10;  // M收到GETM_FORWARD时进入,等待L1的INVALID_ACK，离开时发送GETM_RESP，目的端口为arg
+// const uint32_t MSHR_OTOF = 11;  // O收到GETM_FORWARD时进入,等待L1的INVALID_ACK，离开时发送GETM_RESP，目的端口为arg
+// const uint32_t MSHR_ATOIA = 12; // 所有状态收到INVALID时进入,等待L1的INVALID_ACK，离开时发送INVALID_ACK，目的端口为arg
+
+typedef struct {
+    uint64_t line_buf[CACHE_LINE_LEN_I64];
+    
+    uint32_t state = 0;
+
+    uint8_t get_data_ready = 0;
+    uint8_t get_ack_cnt_ready = 0;
+    uint16_t need_invalid_ack = 0;
+    uint16_t invalid_ack = 0;
+
+    uint64_t log_start_cycle = 0;
+} DefMSHREntry;
 
 string get_cache_mshr_state_name_str(uint32_t state);
 

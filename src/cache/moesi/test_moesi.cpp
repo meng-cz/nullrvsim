@@ -1,8 +1,11 @@
 
 #include "test_moesi.h"
 
+#include "common.h"
+
 #include "lastlevelcache.h"
 #include "l1cachev2.h"
+#include "l1l2v2.h"
 #include "dmaasl1.h"
 #include "memnode.h"
 
@@ -27,14 +30,14 @@ using simcache::MemCtrlLineAddrMap;
 
 class TestL1CacheBusMapping : public BusPortMapping {
 public:
-    virtual bool get_uplink_port(LineIndexT line, BusPortT *out) {
+    virtual bool get_homenode_port(LineIndexT line, BusPortT *out) {
         if(out) *out = 0;
         return true;
     };
-    virtual bool get_memory_port(LineIndexT line, BusPortT *out) { return false; };
+    virtual bool get_subnode_port(LineIndexT line, BusPortT *out) { return false; };
 
-    virtual bool get_downlink_port(uint32_t index, BusPortT *out) { return false; };
-    virtual bool get_downlink_port_index(BusPortT port, uint32_t *out) { return false; };
+    virtual bool get_reqnode_port(uint32_t index, BusPortT *out) { return false; };
+    virtual bool get_reqnode_index(BusPortT port, uint32_t *out) { return false; };
 };
 
 class TestL1CacheBus : public simbus::BusInterfaceV2 {
@@ -281,19 +284,19 @@ bool test_moesi_l1_dma() {
 
 class BusMapping1L24L1 : public BusPortMapping {
 public:
-    virtual bool get_uplink_port(LineIndexT line, BusPortT *out) {
+    virtual bool get_homenode_port(LineIndexT line, BusPortT *out) {
         if(out) *out = 0;
         return true;
     }
-    virtual bool get_memory_port(LineIndexT line, BusPortT *out) {
+    virtual bool get_subnode_port(LineIndexT line, BusPortT *out) {
         if(out) *out = 1;
         return true;
     }
-    virtual bool get_downlink_port(uint32_t index, BusPortT *out) {
+    virtual bool get_reqnode_port(uint32_t index, BusPortT *out) {
         if(out) *out = index + 2;
         return index < 4;
     };
-    virtual bool get_downlink_port_index(BusPortT port, uint32_t *out) {
+    virtual bool get_reqnode_index(BusPortT port, uint32_t *out) {
         if(out) *out = port - 2;
         return (port > 1 && port < 6);
     };
@@ -323,7 +326,7 @@ bool test_cache_1l24l1_seq_wr() {
     BusRouteTable route;
     simbus::genroute_double_ring(nodes, route);
 
-    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, cha_width, route, "bus");
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, nodes, cha_width, route, "bus");
 
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
@@ -456,7 +459,7 @@ bool test_cache_1l24l1_rand_wr() {
     BusRouteTable route;
     simbus::genroute_double_ring(nodes, route);
 
-    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, cha_width, route, "bus");
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, nodes, cha_width, route, "bus");
 
 
     const SizeT memsz = 1024UL * 1024UL * 16UL;
@@ -594,6 +597,345 @@ bool test_moesi_cache_rand() {
 bool test_moesi_cache_seq() {
     return test_cache_1l24l1_seq_wr();
 }
+
+
+
+bool test_moesi_l1l2_dcache() {
+
+    simcache::CacheParam param_l1i, param_l1d, param_l2;
+
+    uint64_t memsz = 1024UL * 1024UL * 16UL;
+
+    uint8_t *hostmem = new uint8_t[memsz];
+    uint8_t *simmem = new uint8_t[memsz];
+
+    memset(hostmem, 0, memsz);
+    memset(simmem, 0, memsz);
+
+    TestL1CacheBus bus(simmem, hostmem);
+
+    bus.debug_log = false;
+    // bus.debug_log = true;
+
+    TestL1CacheBusMapping busmap;
+
+    param_l1d.set_offset = 5;
+    param_l1d.way_cnt = 8;
+    param_l1d.mshr_num = 6;
+    param_l1d.index_latency = 2;
+    param_l1d.index_width = 1;
+
+    param_l1i.set_offset = 5;
+    param_l1i.way_cnt = 4;
+    param_l1i.mshr_num = 4;
+    param_l1i.index_latency = 1;
+    param_l1i.index_width = 2;
+
+    param_l2.set_offset = 7;
+    param_l2.way_cnt = 8;
+    param_l2.mshr_num = 16;
+    param_l2.index_latency = 4;
+    param_l2.index_width = 1;
+
+    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2");
+    simroot::add_sim_object(&l1l2, "l1", 1);
+
+    l1l2.log_info = bus.debug_log;
+
+    PrivL1L2MoesiL1IPort l1i(&l1l2);
+    PrivL1L2MoesiL1DPort l1d(&l1l2);
+
+    uint64_t round = 1024UL * 1024UL;
+    uint64_t log_interval = 1024;
+    printf("(0/%ld)", round);
+    for(uint64_t _n = 0; _n < round; _n++) {
+        if(_n % log_interval == 0) {
+            printf("\r(%ld/%ld)", _n, round);
+            fflush(stdout);
+        }
+
+        bool do_write = RAND(0, 2);
+        PhysAddrT addr = ((rand_long() % memsz) & (~(7UL)));
+        uint64_t data = rand_long();
+        bool succ = false;
+
+        if(bus.debug_log) printf("Addr: 0x%lx, Line: 0x%lx, %s\n", addr, addr_to_line_index(addr), do_write?"write":"read");
+
+        while(!succ) {
+            if(do_write) {
+                succ = (l1d.store(addr, 8, &data, false) == SimError::success);
+            }
+            else {
+                succ = (l1d.load(addr, 8, &data, false) == SimError::success);
+            }
+            l1l2.on_current_tick();
+            l1l2.apply_next_tick();
+        }
+
+        if(do_write) {
+            *((uint64_t*)(hostmem + addr)) = data;
+        }
+        else {
+            simroot_assert(*((uint64_t*)(hostmem + addr)) == data);
+        }
+    }
+
+    printf("\nPass!!!\n");
+    return true;
+    
+}
+
+bool test_moesi_l1l2_icache() {
+
+    simcache::CacheParam param_l1i, param_l1d, param_l2;
+
+    uint64_t memsz = 1024UL * 1024UL * 16UL;
+
+    uint8_t *hostmem = new uint8_t[memsz];
+    uint8_t *simmem = new uint8_t[memsz];
+
+    memset(hostmem, 0, memsz);
+    memset(simmem, 0, memsz);
+
+    for(uint64_t i = 0; i < memsz; i+=8) {
+        *((uint64_t*)(hostmem+i)) = rand_long();
+    }
+    memcpy(simmem, hostmem, memsz);
+
+    TestL1CacheBus bus(simmem, hostmem);
+
+    bus.debug_log = false;
+    // bus.debug_log = true;
+
+    TestL1CacheBusMapping busmap;
+
+    param_l1d.set_offset = 5;
+    param_l1d.way_cnt = 8;
+    param_l1d.mshr_num = 6;
+    param_l1d.index_latency = 2;
+    param_l1d.index_width = 1;
+
+    param_l1i.set_offset = 5;
+    param_l1i.way_cnt = 4;
+    param_l1i.mshr_num = 4;
+    param_l1i.index_latency = 1;
+    param_l1i.index_width = 2;
+
+    param_l2.set_offset = 7;
+    param_l2.way_cnt = 8;
+    param_l2.mshr_num = 16;
+    param_l2.index_latency = 4;
+    param_l2.index_width = 1;
+
+    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2");
+    simroot::add_sim_object(&l1l2, "l1", 1);
+
+    l1l2.log_info = bus.debug_log;
+
+    PrivL1L2MoesiL1IPort l1i(&l1l2);
+    PrivL1L2MoesiL1DPort l1d(&l1l2);
+
+    uint64_t round = 1024UL * 1024UL;
+    uint64_t log_interval = 1024;
+    printf("(0/%ld)", round);
+    for(uint64_t _n = 0; _n < round; _n++) {
+        if(_n % log_interval == 0) {
+            printf("\r(%ld/%ld)", _n, round);
+            fflush(stdout);
+        }
+
+        PhysAddrT addr = ((rand_long() % memsz) & (~(7UL)));
+        uint64_t data = 0;
+        bool succ = false;
+
+        while(!succ) {
+            succ = (l1i.load(addr, 8, &data, false) == SimError::success);
+
+            l1l2.on_current_tick();
+            l1l2.apply_next_tick();
+        }
+
+        simroot_assert(*((uint64_t*)(hostmem + addr)) == data);
+    }
+
+    printf("\nPass!!!\n");
+    return true;
+    
+}
+
+bool test_moesi_l1l2_cache() {
+    printf("Test L1-I:\n");
+    assert(test_moesi_l1l2_icache());
+    printf("Test L1-D:\n");
+    assert(test_moesi_l1l2_dcache());
+    return true;
+}
+
+
+
+
+bool test_moesi_cache_l1l2l3_rand() {
+
+    vector<BusPortT> nodes;
+    for(int i = 0; i < 6; i++) {
+        nodes.push_back(i);
+    }
+    vector<uint32_t> cha_width;
+    cha_width.assign(CHANNEL_CNT, 32);
+    BusRouteTable route;
+    simbus::genroute_double_ring(nodes, route);
+
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, nodes, cha_width, route, "bus");
+
+    const SizeT memsz = 1024UL * 1024UL * 16UL;
+    uint8_t *pmem = new uint8_t[memsz];
+    MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+
+    BusMapping1L24L1 bus_mapping;
+
+    simcache::CacheParam param;
+    param.set_offset = param.dir_set_offset = 10;
+    param.way_cnt = 8;
+    param.dir_way_cnt = 32;
+    param.mshr_num = 8;
+    param.index_latency = 10;
+    param.index_width = 1;
+
+    LLCMoesiDirNoi *l3 = new LLCMoesiDirNoi(
+        param,
+        bus,
+        0,
+        &bus_mapping,
+        string("l3cache")
+    );
+
+    simcache::CacheParam param_l1i, param_l1d, param_l2;
+
+    param_l1d.set_offset = 5;
+    param_l1d.way_cnt = 8;
+    param_l1d.mshr_num = 6;
+    param_l1d.index_latency = 2;
+    param_l1d.index_width = 1;
+
+    param_l1i.set_offset = 5;
+    param_l1i.way_cnt = 4;
+    param_l1i.mshr_num = 4;
+    param_l1i.index_latency = 1;
+    param_l1i.index_width = 2;
+
+    param_l2.set_offset = 7;
+    param_l2.way_cnt = 8;
+    param_l2.mshr_num = 16;
+    param_l2.index_latency = 4;
+    param_l2.index_width = 1;
+
+    PrivL1L2Moesi *l1l2s[4];
+    PrivL1L2MoesiL1IPort *l1is[4];
+    PrivL1L2MoesiL1DPort *l1ds[4];
+    for(int i = 0; i < 4; i++) {
+        l1l2s[i] = new PrivL1L2Moesi(
+            param_l2, param_l1d, param_l1i, 
+            bus,
+            i+2,
+            &bus_mapping,
+            string("l1-") + to_string(i)
+        );
+        l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
+        l1ds[i] = new PrivL1L2MoesiL1DPort(l1l2s[i]);
+    }
+
+    uint64_t tick = 0;
+    auto next_tick = [&]()->void {
+        for(int i = 0; i < 4; i++) l1l2s[i]->on_current_tick();
+        l3->on_current_tick();
+        bus->on_current_tick();
+        mem->on_current_tick();
+        for(int i = 0; i < 4; i++) l1l2s[i]->apply_next_tick();
+        l3->apply_next_tick();
+        bus->apply_next_tick();
+        mem->apply_next_tick();
+        tick++;
+    };
+
+    simroot::add_sim_object(bus, "bus");
+    simroot::add_sim_object(l3, "l3");
+    simroot::add_sim_object(mem, "mem");
+    for(int i = 0; i < 4; i++) simroot::add_sim_object(l1l2s[i], string("l1-") + to_string(i));
+
+    for(SizeT i = 0; i < memsz; i += sizeof(uint64_t) * 2UL) {
+        uint64_t d0 = i;
+        uint64_t d1 = i + sizeof(uint64_t);
+        bool succ0 = false, succ1 = false;
+        while(!(succ0 && succ1)) {
+            if(!succ0) succ0 = (l1ds[0]->store(d0, 8, &d0, false) == SimError::success);
+            if(!succ1) succ1 = (l1ds[1]->store(d1, 8, &d1, false) == SimError::success);
+            next_tick();
+        }
+    }
+
+    for(SizeT i = 0; i < memsz; i += sizeof(uint64_t) * 2UL) {
+        uint64_t a0 = i, a1 = i + sizeof(uint64_t);
+        uint64_t d0 = 0, d1 = 0;
+        bool succ0 = false, succ1 = false;
+        while(!(succ0 && succ1)) {
+            if(!succ0) succ0 = (l1ds[2]->load(a0, 8, &d0, false) == SimError::success);
+            if(!succ1) succ1 = (l1ds[3]->load(a1, 8, &d1, false) == SimError::success);
+            next_tick();
+        }
+        assert(d0 == a0);
+        assert(d1 == a1);
+    }
+
+    printf("Succ 1\n");
+
+    for(SizeT i = 0; i < memsz; i += sizeof(uint64_t) * 2UL) {
+        uint64_t a0 = i, a1 = i + sizeof(uint64_t);
+        uint64_t d0 = memsz - a0, d1 = memsz - a1;
+        bool succ0 = false, succ1 = false;
+        while(!(succ0 && succ1)) {
+            if(!succ0) succ0 = (l1ds[0]->store(a0, 8, &d0, false) == SimError::success);
+            if(!succ1) succ1 = (l1ds[1]->store(a1, 8, &d1, false) == SimError::success);
+            next_tick();
+        }
+    }
+
+    for(SizeT i = 0; i < memsz; i += sizeof(uint64_t) * 2UL) {
+        uint64_t a0 = i, a1 = i + sizeof(uint64_t);
+        uint64_t e0 = memsz - a0, e1 = memsz - a1;
+        uint64_t d0 = 0, d1 = 0;
+        bool succ0 = false, succ1 = false;
+        while(!(succ0 && succ1)) {
+            if(!succ0) succ0 = (l1ds[2]->load(a0, 8, &d0, false) == SimError::success);
+            if(!succ1) succ1 = (l1ds[3]->load(a1, 8, &d1, false) == SimError::success);
+            next_tick();
+        }
+        assert(d0 == e0);
+        assert(d1 == e1);
+    }
+
+    printf("Succ 2\n");
+
+    printf("Pass test_moesi_cache_l1l2l3_rand() !!!\n");
+
+    delete mem;
+    delete bus;
+    delete l3;
+    for(int i = 0; i < 4; i++) {
+        delete l1is[i];
+        delete l1ds[i];
+        delete l1l2s[i];
+    }
+
+    return true;
+}
+
+bool test_moesi_cache_l1l2l3_seq() {
+    assert(0);
+    return true;
+}
+
+
 
 }
 

@@ -137,11 +137,11 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_downlink_port_index(src_port, &l1_index));
+        assert(busmap->get_reqnode_index(src_port, &l1_index));
         
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
-            simroot_assert(busmap->get_memory_port(pak->lindex, &dst));
+            simroot_assert(busmap->get_subnode_port(pak->lindex, &dst));
             pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg);
 
             pak->entry.dirty = true;
@@ -161,7 +161,7 @@ void LLCMoesiDirNoi::p2_index() {
         }
         else {
             simroot_assert(pak->entry.exists.find(pak->entry.owner) != pak->entry.exists.end());
-            simroot_assert(busmap->get_downlink_port(pak->entry.owner, &dst));
+            simroot_assert(busmap->get_reqnode_port(pak->entry.owner, &dst));
             pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg);
 
             pak->entry.exists.insert(l1_index);
@@ -179,11 +179,11 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_downlink_port_index(src_port, &l1_index));
+        assert(busmap->get_reqnode_index(src_port, &l1_index));
         
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
-            simroot_assert(busmap->get_memory_port(pak->lindex, &dst));
+            simroot_assert(busmap->get_subnode_port(pak->lindex, &dst));
             pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg);
 
             pak->entry.dirty = true;
@@ -209,7 +209,7 @@ void LLCMoesiDirNoi::p2_index() {
             bool skip_owner = false;
             if(std::find(pak->entry.exists.begin(), pak->entry.exists.end(), l1_index) == pak->entry.exists.end())
             {
-                simroot_assert(busmap->get_downlink_port(pak->entry.owner, &dst));
+                simroot_assert(busmap->get_reqnode_port(pak->entry.owner, &dst));
                 pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg);
                 skip_owner = true;
             }
@@ -218,7 +218,7 @@ void LLCMoesiDirNoi::p2_index() {
                 if(l1 == l1_index || (skip_owner && l1 == pak->entry.owner)) {
                     continue;
                 }
-                simroot_assert(busmap->get_downlink_port(l1, &dst));
+                simroot_assert(busmap->get_reqnode_port(l1, &dst));
                 pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex, pak->arg);
                 invalid_cnt++;
             }
@@ -235,7 +235,7 @@ void LLCMoesiDirNoi::p2_index() {
         
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_downlink_port_index(src_port, &l1_index));
+        assert(busmap->get_reqnode_index(src_port, &l1_index));
 
         DirEntry *pentry = nullptr;
         pak->dir_hit = directory->get_line(pak->lindex, &pentry, false);
@@ -261,7 +261,7 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_downlink_port_index(src_port, &l1_index));
+        assert(busmap->get_reqnode_index(src_port, &l1_index));
 
         if(pak->entry.owner == l1_index) {
             CacheLineT new_line, replaced_line;
@@ -273,13 +273,13 @@ void LLCMoesiDirNoi::p2_index() {
 
                 if(rep_dir_hit && !(rep_ent->dirty)) {
                     for(auto l1 : rep_ent->exists) {
-                        simroot_assert(busmap->get_downlink_port(l1, &dst));
+                        simroot_assert(busmap->get_reqnode_port(l1, &dst));
                         pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex_replaced, my_port_id);
                     }
                     directory->remove_line(pak->lindex_replaced);
                 }
 
-                simroot_assert(busmap->get_memory_port(pak->lindex_replaced, &dst));
+                simroot_assert(busmap->get_subnode_port(pak->lindex_replaced, &dst));
                 pak->push_send_buf_with_line(dst, CHANNEL_REQ, MSG_PUTM, pak->lindex_replaced, my_port_id, replaced_line.data());
             }
         }

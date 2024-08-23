@@ -20,7 +20,7 @@ void DMAL1MoesiDirNoi::handle_recv_msg(CacheCohenrenceMsg &msgbuf) {
     LineIndexT lindex = msgbuf.line;
     uint32_t arg = msgbuf.arg;
     BusPortT l2_port = 0;
-    assert(busmap->get_uplink_port(lindex, &l2_port));
+    assert(busmap->get_homenode_port(lindex, &l2_port));
     MSHREntry *mshr = nullptr;
     simroot_assert(mshr = mshrs.get(lindex));
     bool current_finished = false;
@@ -167,7 +167,7 @@ void DMAL1MoesiDirNoi::on_current_tick() {
                 current->line_wait_finish.insert(lindex);
                 wait_lines.emplace(lindex, current);
                 BusPortT l2_port = 0;
-                assert(busmap->get_uplink_port(lindex, &l2_port));
+                assert(busmap->get_homenode_port(lindex, &l2_port));
                 // printf("Request line 0x%lx\n", lindex);
                 if(current->req.type == DMAReqType::host_memory_read) {
                     mshr->state = MSHR_ITOM;

@@ -66,28 +66,28 @@ public:
     };
     inline uint32_t get_port_num() { return port_num; }
 
-    virtual bool get_uplink_port(LineIndexT line, BusPortT *out) {
+    virtual bool get_homenode_port(LineIndexT line, BusPortT *out) {
         if((line >> CACHE_LINE_ADDR_OFFSET) >= (param.mem_base + param.mem_sz) || (line >> CACHE_LINE_ADDR_OFFSET) < param.mem_base) {
             return false;
         }
         if(out) *out = l2_ports[line % param.l2_slice_num];
         return true;
     }
-    virtual bool get_memory_port(LineIndexT line, BusPortT *out) {
+    virtual bool get_subnode_port(LineIndexT line, BusPortT *out) {
         if((line >> CACHE_LINE_ADDR_OFFSET) >= (param.mem_base + param.mem_sz) || (line >> CACHE_LINE_ADDR_OFFSET) < param.mem_base) {
             return false;
         }
         if(out) *out = mem_ports[line % param.mem_ctrl_num];
         return true;
     }
-    virtual bool get_downlink_port(uint32_t index, BusPortT *out) {
+    virtual bool get_reqnode_port(uint32_t index, BusPortT *out) {
         if(index >= l1_ports.size()) {
             return false;
         }
         if(out) *out = l1_ports[index];
         return true;
     }
-    virtual bool get_downlink_port_index(BusPortT port, uint32_t *out) {
+    virtual bool get_reqnode_index(BusPortT port, uint32_t *out) {
         auto res = cpu_index.find(port);
         if(res == cpu_index.end()) {
             return false;
@@ -164,7 +164,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     simbus::genroute_double_ring(nodes, route);
 
     unique_ptr<SymmetricMultiChannelBus> bus = make_unique<SymmetricMultiChannelBus>(
-        nodes, cha_width, route, "Bus"
+        nodes, nodes, cha_width, route, "Bus"
     );
     simroot::add_sim_object(bus.get(), "Bus", 1);
     
@@ -174,7 +174,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     BusPortT busport;
 
     MultiCoreL1L2AddrMap memaddrmap(param, 0);
-    assert(busmap.get_memory_port(0, &busport));
+    assert(busmap.get_subnode_port(0, &busport));
     std::unique_ptr<MemoryNode> memory =  std::make_unique<MemoryNode>(pmem, &memaddrmap, bus.get(), busport, 32);
     simroot::add_sim_object(memory.get(), "MemoryNode", 1);
 
@@ -187,7 +187,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     cp.index_latency = conf::get_int("llc", "index_cycle", 4);
     cp.index_width = 1;
 
-    assert(busmap.get_uplink_port(0, &busport));
+    assert(busmap.get_homenode_port(0, &busport));
     std::unique_ptr<LLCMoesiDirNoi> l2 =  std::make_unique<LLCMoesiDirNoi>(
         cp, bus.get(), busport, &busmap, "l2cache"
     );
@@ -212,12 +212,12 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     std::vector<std::unique_ptr<L1CacheMoesiDirNoiV2>> l1ds;
     std::vector<std::unique_ptr<L1CacheMoesiDirNoiV2>> l1is;
     for(uint32_t i = 0; i < param.cpu_num; i++) {
-        assert(busmap.get_downlink_port(i*2, &busport));
+        assert(busmap.get_reqnode_port(i*2, &busport));
         sprintf(namebuf, "l1dcache%d", i);
         l1ds.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoiV2>(
             dcp, bus.get(), busport, &busmap, namebuf
         )));
-        assert(busmap.get_downlink_port(i*2 + 1, &busport));
+        assert(busmap.get_reqnode_port(i*2 + 1, &busport));
         sprintf(namebuf, "l1icache%d", i);
         l1is.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoiV2>(
             icp, bus.get(), busport, &busmap, namebuf
@@ -251,7 +251,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     }
 
 
-    assert(busmap.get_downlink_port(param.cpu_num*2, &busport));
+    assert(busmap.get_reqnode_port(param.cpu_num*2, &busport));
     std::unique_ptr<DMAL1MoesiDirNoi> simdma = std::make_unique<DMAL1MoesiDirNoi>(bus.get(), busport, &busmap);
     simdma->set_handler(simsys.get());
     simroot::add_sim_object(simdma.get(), "DMA", 1);

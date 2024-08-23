@@ -45,7 +45,6 @@ struct {
 
 int main(int argc, char* argv[]) {
     //------------------------- Init ------------------------
-    srand(get_current_time_us());
 
     auto print_help_and_exit = [=]()->void {
         printf("Usage: %s operation [[-c configs] [-s str_args] [-i int_args] [-f float_args] ...] [-w workload argvs]\n", argv[0]);
@@ -105,6 +104,9 @@ int main(int argc, char* argv[]) {
     defaultConf.set(el::Level::Info, el::ConfigurationType::Format, "%datetime %level %msg");
     el::Loggers::reconfigureLogger("default", defaultConf);
 
+    uint32_t rand_seed = conf::get_int("root", "rand_seed", 0);
+    srand(rand_seed?rand_seed:get_current_time_us());
+
     execution();
 
     return 0;
@@ -154,6 +156,14 @@ void execution() {
 
     OPERATION(op, "test_moesi_l1_cache", {
         TEST(test::test_moesi_l1_cache());
+    });
+
+    OPERATION(op, "test_moesi_l1l2_cache", {
+        TEST(test::test_moesi_l1l2_cache());
+    });
+
+    OPERATION(op, "test_moesi_cache_l1l2l3_rand", {
+        TEST(test::test_moesi_cache_l1l2l3_rand());
     });
 
     OPERATION(op, "test_moesi_l1_dma", {

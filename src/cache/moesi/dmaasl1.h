@@ -97,7 +97,20 @@ protected:
         construct_msg_pack(tmp, send.msg);
     }
 
-    MSHRArray mshrs;
+    typedef struct {
+        uint64_t line_buf[CACHE_LINE_LEN_I64];
+        
+        uint32_t state = 0;
+
+        uint8_t get_data_ready = 0;
+        uint8_t get_ack_cnt_ready = 0;
+        uint16_t need_invalid_ack = 0;
+        uint16_t invalid_ack = 0;
+
+        uint64_t log_start_cycle = 0;
+    } MSHREntry;
+
+    MSHRArray<MSHREntry> mshrs;
 
     void handle_recv_msg(CacheCohenrenceMsg &msg);
 
