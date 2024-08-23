@@ -228,6 +228,7 @@ struct rv_stat {
     uint32_t    st_uid;		/* User ID of the file's owner.  */
     uint32_t    st_gid;		/* Group ID of the file's group.  */
     uint64_t    st_rdev;		/* Device number, if device.  */
+    uint64_t    __pad1;
     int64_t     st_size;		/* Size of file, in bytes.  */
     int64_t     st_blksize;	/* Optimal block size for I/O.  */
     int64_t     st_blocks;	/* Number 512-byte blocks allocated. */
