@@ -23,6 +23,12 @@ queue_index(1,1,0), queue_writeback(1,1,4), queue_index_result(1,1,0)
     index_cycle = param.index_latency;
     process_buf_size = param.mshr_num;
 
+    nuca_num = param.nuca_num;
+    nuca_index = param.nuca_index;
+
+    simroot_assertf(nuca_num > 0, "NUCA node num must be more than 1: %ld", nuca_num);
+    simroot_assertf(nuca_index < nuca_num, "Invalid NUCA node index %ld for %ld nodes", nuca_index, nuca_num)
+
     block = make_unique<GenericLRUCacheBlock<CacheLineT>>(param.set_offset, param.way_cnt);
     directory = make_unique<GenericLRUCacheBlock<DirEntry>>(param.dir_set_offset, param.dir_way_cnt);
 }
@@ -43,13 +49,14 @@ void LLCMoesiDirNoi::p1_fetch() {
         }
     }
     if(recv) {
+        simroot_assertf(nuca_check(msg.line), "Unexpected Line @0x%lx at NUCA node %ld/%ld", msg.line, nuca_index, nuca_num);
         switch (msg.type)
         {
         case MSG_INVALID_ACK :
             break;
         case MSG_GET_ACK :
             processing_lindex.erase(msg.line);
-            block->unpin(msg.line);
+            block->unpin(lindex_to_nuca_tag(msg.line));
             break;
         case MSG_PUTM :
         case MSG_PUTO :
@@ -84,7 +91,7 @@ void LLCMoesiDirNoi::p1_fetch() {
         }
         queue_index.push(topush);
         processing_lindex.insert(iter->line);
-        block->pin(iter->line);
+        block->pin(lindex_to_nuca_tag(iter->line));
         recv_buf.erase(iter);
         break;
     }
@@ -94,16 +101,16 @@ void LLCMoesiDirNoi::p2_index() {
     if(queue_writeback.can_pop()) {
         RequestPackage *wb = queue_writeback.top();
         if(wb->dir_evict) {
-            directory->remove_line(wb->lindex);
+            directory->remove_line(lindex_to_nuca_tag(wb->lindex));
         }
         else {
             LineIndexT tmp = 0;
             DirEntry tmpent;
-            simroot_assert(!(directory->insert_line(wb->lindex, &(wb->entry), &tmp, &tmpent)));
+            simroot_assert(!(directory->insert_line(lindex_to_nuca_tag(wb->lindex), &(wb->entry), &tmp, &tmpent)));
         }
         if(!(wb->delay_commit)) {
             processing_lindex.erase(wb->lindex);
-            block->unpin(wb->lindex);
+            block->unpin(lindex_to_nuca_tag(wb->lindex));
         }
         queue_writeback.pop();
         delete wb;
@@ -128,9 +135,9 @@ void LLCMoesiDirNoi::p2_index() {
 
     if(pak->type == MSG_GETS) {
         CacheLineT *pline = nullptr;
-        pak->blk_hit = block->get_line(pak->lindex, &pline, true);
+        pak->blk_hit = block->get_line(lindex_to_nuca_tag(pak->lindex), &pline, true);
         DirEntry *pentry = nullptr;
-        if(pak->dir_hit = directory->get_line(pak->lindex, &pentry, false)) {
+        if(pak->dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex), &pentry, false)) {
             pak->entry = *pentry;
         }
         pak->blk_replaced = false;
@@ -170,9 +177,9 @@ void LLCMoesiDirNoi::p2_index() {
     }
     else if(pak->type == MSG_GETM) {
         CacheLineT *pline = nullptr;
-        pak->blk_hit = block->get_line(pak->lindex, &pline, true);
+        pak->blk_hit = block->get_line(lindex_to_nuca_tag(pak->lindex), &pline, true);
         DirEntry *pentry = nullptr;
-        if(pak->dir_hit = directory->get_line(pak->lindex, &pentry, false)) {
+        if(pak->dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex), &pentry, false)) {
             pak->entry = *pentry;
         }
         pak->blk_replaced = false;
@@ -204,7 +211,7 @@ void LLCMoesiDirNoi::p2_index() {
         else {
             if(pak->blk_hit) {
                 // LLC is out-of-date
-                block->remove_line(pak->lindex);
+                block->remove_line(lindex_to_nuca_tag(pak->lindex));
             }
             bool skip_owner = false;
             if(std::find(pak->entry.exists.begin(), pak->entry.exists.end(), l1_index) == pak->entry.exists.end())
@@ -238,7 +245,7 @@ void LLCMoesiDirNoi::p2_index() {
         assert(busmap->get_reqnode_index(src_port, &l1_index));
 
         DirEntry *pentry = nullptr;
-        pak->dir_hit = directory->get_line(pak->lindex, &pentry, false);
+        pak->dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex), &pentry, false);
         if(pak->dir_hit) {
             pak->entry = *pentry;
             pak->entry.exists.erase(l1_index);
@@ -256,7 +263,7 @@ void LLCMoesiDirNoi::p2_index() {
     else if(pak->type == MSG_PUTM || pak->type == MSG_PUTO) {
 
         DirEntry *pentry = nullptr;
-        simroot_assert(pak->dir_hit = directory->get_line(pak->lindex, &pentry, false));
+        simroot_assert(pak->dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex), &pentry, false));
         pak->entry = *pentry;
 
         uint32_t l1_index = 0;
@@ -267,16 +274,17 @@ void LLCMoesiDirNoi::p2_index() {
             CacheLineT new_line, replaced_line;
             // new_line.state = CacheLineState::owned;
             cache_line_copy(new_line.data(), pak->line_buf);
-            if(pak->blk_replaced = block->insert_line(pak->lindex, &new_line, &(pak->lindex_replaced), &replaced_line)) {
+            if(pak->blk_replaced = block->insert_line(lindex_to_nuca_tag(pak->lindex), &new_line, &(pak->lindex_replaced), &replaced_line)) {
+                pak->lindex_replaced = nuca_tag_to_lindex(pak->lindex_replaced);
                 DirEntry *rep_ent;
-                bool rep_dir_hit = directory->get_line(pak->lindex_replaced, &rep_ent, false);
+                bool rep_dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex_replaced), &rep_ent, false);
 
                 if(rep_dir_hit && !(rep_ent->dirty)) {
                     for(auto l1 : rep_ent->exists) {
                         simroot_assert(busmap->get_reqnode_port(l1, &dst));
                         pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex_replaced, my_port_id);
                     }
-                    directory->remove_line(pak->lindex_replaced);
+                    directory->remove_line(lindex_to_nuca_tag(pak->lindex_replaced));
                 }
 
                 simroot_assert(busmap->get_subnode_port(pak->lindex_replaced, &dst));
@@ -356,7 +364,7 @@ void LLCMoesiDirNoi::dump_core(std::ofstream &ofile) {
         sprintf(log_buf, "set %d: ", s);
         ofile << log_buf;
         for(auto &e : block->p_sets[s]) {
-            sprintf(log_buf, "0x%lx ", e.first);
+            sprintf(log_buf, "0x%lx ", nuca_tag_to_lindex(e.first));
             ofile << log_buf;
         }
         ofile << "\n";
@@ -365,7 +373,7 @@ void LLCMoesiDirNoi::dump_core(std::ofstream &ofile) {
         sprintf(log_buf, "dir %d: ", s);
         ofile << log_buf;
         for(auto &e : directory->p_sets[s]) {
-            sprintf(log_buf, "0x%lx-d%d-o%d", e.first, e.second.dirty, e.second.owner);
+            sprintf(log_buf, "0x%lx-d%d-o%d", nuca_tag_to_lindex(e.first), e.second.dirty, e.second.owner);
             ofile << log_buf;
             for(auto &s : e.second.exists) {
                 sprintf(log_buf, "-%d", s);

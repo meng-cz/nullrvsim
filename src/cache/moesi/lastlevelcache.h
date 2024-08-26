@@ -44,6 +44,18 @@ protected:
     BusPortT my_port_id;
     BusPortMapping *busmap = nullptr;
 
+    uint64_t nuca_num = 1;
+    uint64_t nuca_index = 0;
+    inline bool nuca_check(LineIndexT lindex) {
+        return ((lindex % nuca_num) == nuca_index);
+    }
+    inline LineIndexT lindex_to_nuca_tag(LineIndexT lindex) {
+        return lindex / nuca_num;
+    }
+    inline LineIndexT nuca_tag_to_lindex(LineIndexT nuca_tag) {
+        return (nuca_tag * nuca_num) + nuca_index;
+    }
+
     uint32_t index_cycle = 4;
 
     std::list<CacheCohenrenceMsg> recv_buf;

@@ -17,6 +17,8 @@ typedef struct {
     uint32_t    mshr_num = 6;
     uint32_t    index_latency = 2;
     uint32_t    index_width = 2;
+    uint32_t    nuca_num = 1;
+    uint32_t    nuca_index = 0;
 } CacheParam;
 
 typedef std::array<uint8_t, CACHE_LINE_LEN_BYTE> CacheLineT;

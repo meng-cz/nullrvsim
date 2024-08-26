@@ -17,6 +17,8 @@ bool test_moesi_cache_l1l2l3_rand();
 
 bool test_moesi_cache_l1l2l3_seq();
 
+bool test_moesi_cache_l3nuca_rand();
+
 }
 
 #endif

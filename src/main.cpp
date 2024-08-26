@@ -176,6 +176,10 @@ void execution() {
         TEST(test::test_moesi_cache_l1l2l3_seq());
     });
 
+    OPERATION(op, "test_moesi_cache_l3nuca_rand", {
+        TEST(test::test_moesi_cache_l3nuca_rand());
+    });
+
     OPERATION(op, "test_moesi_l1_dma", {
         TEST(test::test_moesi_l1_dma());
     });
