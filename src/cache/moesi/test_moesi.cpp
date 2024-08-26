@@ -774,7 +774,7 @@ bool test_moesi_l1l2_cache() {
 
 
 
-bool test_moesi_cache_l1l2l3_rand() {
+bool test_moesi_cache_l1l2l3_seq() {
 
     vector<BusPortT> nodes;
     for(int i = 0; i < 6; i++) {
@@ -810,6 +810,8 @@ bool test_moesi_cache_l1l2l3_rand() {
         string("l3cache")
     );
 
+    // l3->do_log = true;
+
     simcache::CacheParam param_l1i, param_l1d, param_l2;
 
     param_l1d.set_offset = 5;
@@ -841,6 +843,7 @@ bool test_moesi_cache_l1l2l3_rand() {
             &bus_mapping,
             string("l1-") + to_string(i)
         );
+        // l1l2s[i]->log_info = true;
         l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
         l1ds[i] = new PrivL1L2MoesiL1DPort(l1l2s[i]);
     }
@@ -916,7 +919,7 @@ bool test_moesi_cache_l1l2l3_rand() {
 
     printf("Succ 2\n");
 
-    printf("Pass test_moesi_cache_l1l2l3_rand() !!!\n");
+    printf("Pass test_moesi_cache_l1l2l3_seq() !!!\n");
 
     delete mem;
     delete bus;
@@ -930,8 +933,167 @@ bool test_moesi_cache_l1l2l3_rand() {
     return true;
 }
 
-bool test_moesi_cache_l1l2l3_seq() {
-    assert(0);
+bool test_moesi_cache_l1l2l3_rand() {
+
+    
+    vector<BusPortT> nodes;
+    for(int i = 0; i < 6; i++) {
+        nodes.push_back(i);
+    }
+    vector<uint32_t> cha_width;
+    cha_width.assign(CHANNEL_CNT, 32);
+    BusRouteTable route;
+    simbus::genroute_double_ring(nodes, route);
+
+    SymmetricMultiChannelBus *bus = new SymmetricMultiChannelBus(nodes, nodes, cha_width, route, "bus");
+
+    const SizeT memsz = 1024UL * 1024UL * 16UL;
+    uint8_t *pmem = new uint8_t[memsz];
+    MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+
+    BusMapping1L24L1 bus_mapping;
+
+    simcache::CacheParam param;
+    param.set_offset = param.dir_set_offset = 10;
+    param.way_cnt = 8;
+    param.dir_way_cnt = 32;
+    param.mshr_num = 8;
+    param.index_latency = 10;
+    param.index_width = 1;
+
+    LLCMoesiDirNoi *l3 = new LLCMoesiDirNoi(
+        param,
+        bus,
+        0,
+        &bus_mapping,
+        string("l3cache")
+    );
+
+    simcache::CacheParam param_l1i, param_l1d, param_l2;
+
+    param_l1d.set_offset = 5;
+    param_l1d.way_cnt = 8;
+    param_l1d.mshr_num = 6;
+    param_l1d.index_latency = 2;
+    param_l1d.index_width = 1;
+
+    param_l1i.set_offset = 5;
+    param_l1i.way_cnt = 4;
+    param_l1i.mshr_num = 4;
+    param_l1i.index_latency = 1;
+    param_l1i.index_width = 2;
+
+    param_l2.set_offset = 7;
+    param_l2.way_cnt = 8;
+    param_l2.mshr_num = 16;
+    param_l2.index_latency = 4;
+    param_l2.index_width = 1;
+
+    PrivL1L2Moesi *l1l2s[4];
+    PrivL1L2MoesiL1IPort *l1is[4];
+    PrivL1L2MoesiL1DPort *l1ds[4];
+    for(int i = 0; i < 4; i++) {
+        l1l2s[i] = new PrivL1L2Moesi(
+            param_l2, param_l1d, param_l1i, 
+            bus,
+            i+2,
+            &bus_mapping,
+            string("l1-") + to_string(i)
+        );
+        l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
+        l1ds[i] = new PrivL1L2MoesiL1DPort(l1l2s[i]);
+        // l1l2s[i]->log_info = true;
+    }
+
+    uint64_t tick = 0;
+    auto next_tick = [&]()->void {
+        for(int i = 0; i < 4; i++) l1l2s[i]->on_current_tick();
+        l3->on_current_tick();
+        bus->on_current_tick();
+        mem->on_current_tick();
+        for(int i = 0; i < 4; i++) l1l2s[i]->apply_next_tick();
+        l3->apply_next_tick();
+        bus->apply_next_tick();
+        mem->apply_next_tick();
+        tick++;
+    };
+
+    simroot::add_sim_object(bus, "bus");
+    simroot::add_sim_object(l3, "l3");
+    simroot::add_sim_object(mem, "mem");
+    for(int i = 0; i < 4; i++) simroot::add_sim_object(l1l2s[i], string("l1-") + to_string(i));
+
+
+    uint64_t round = 1024UL * 1024UL;
+    uint64_t output_interval = 1024UL;
+
+    uint8_t *host_mem = new uint8_t[memsz];
+    memset(host_mem, 0, memsz);
+
+    auto perform_cache_op = [](PrivL1L2MoesiL1DPort *c, bool write, uint64_t addr, uint64_t *buf) -> bool {
+        if(write) {
+            return (c->store(addr, 8, buf, false) == SimError::success);
+        }
+        else {
+            return (c->load(addr, 8, buf, false) == SimError::success);
+        }
+    };
+
+    printf("Test 0/%ld", round);
+    for(uint64_t __n = 0; __n < round; __n++) {
+        if((__n % output_interval) == output_interval - 1) {
+            printf("\rTest %ld/%ld", __n + 1, round);
+            fflush(stdout);
+        }
+
+        bool succ[4] = {false, false, false, false};
+        bool do_write[4] = {false, false, false, false};
+        uint64_t datas[4];
+        std::vector<uint64_t> addrs;
+
+        for(int i = 0; i < 4; i++) {
+            do_write[i] = RAND(0, 2);
+            datas[i] = rand_long();
+            uint64_t a = ((rand_long() % memsz) & (~7UL));
+            while(find_iteratable(addrs.begin(), addrs.end(), a) != addrs.end()) a = ((rand_long() % memsz) & (~7UL));
+            addrs.push_back(a);
+        }
+
+        while(!(succ[0] && succ[1] && succ[2] && succ[3])) {
+            if(!succ[0]) succ[0] = perform_cache_op(l1ds[0], do_write[0], addrs[0], datas+0);
+            if(!succ[1]) succ[1] = perform_cache_op(l1ds[1], do_write[1], addrs[1], datas+1);
+            if(!succ[2]) succ[2] = perform_cache_op(l1ds[2], do_write[2], addrs[2], datas+2);
+            if(!succ[3]) succ[3] = perform_cache_op(l1ds[3], do_write[3], addrs[3], datas+3);
+            next_tick();
+        }
+
+        for(int i = 0; i < 4; i++) {
+            if(do_write[i]) {
+                *((uint64_t*)(host_mem + addrs[i])) = datas[i];
+            }
+            else {
+                if(*((uint64_t*)(host_mem + addrs[i])) != datas[i]) {
+                    printf("CORE %d ERROR: @0x%lx, line @0x%lx\n", i, addrs[i], addr_to_line_index(addrs[i]));
+                    simroot_assert(0);
+                }
+            }
+        }
+    }
+
+    printf("\n");
+
+    printf("Pass test_moesi_cache_l1l2l3_rand() !!!\n");
+
+    delete mem;
+    delete bus;
+    delete l3;
+    for(int i = 0; i < 4; i++) {
+        delete l1is[i];
+        delete l1ds[i];
+        delete l1l2s[i];
+    }
+
     return true;
 }
 

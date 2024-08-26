@@ -105,7 +105,9 @@ int main(int argc, char* argv[]) {
     el::Loggers::reconfigureLogger("default", defaultConf);
 
     uint32_t rand_seed = conf::get_int("root", "rand_seed", 0);
-    srand(rand_seed?rand_seed:get_current_time_us());
+    if(rand_seed == 0) rand_seed = get_current_time_us();
+    std::cout << "Random seed: " << rand_seed << std::endl;
+    srand(rand_seed);
 
     execution();
 
@@ -123,12 +125,14 @@ void execution() {
     PRINT_ARGS(S);
     PRINT_ARGS(W);
 
+    // -------- Launch --------
 
     OPERATION(op, "mp_moesi_l1l2", {
         ASSERT_MORE_ARGS(W, 1, "elf_path")
         TEST(launch::mp_moesi_l1l2(W));
     });
 
+    // -------- Simulator Test --------
 
     OPERATION(op, "test_simroot", {
         TEST(test::test_simroot());
@@ -145,6 +149,8 @@ void execution() {
     OPERATION(op, "test_ini_file", {
         TEST(test::test_ini_file());
     });
+
+    // -------- Cache Test --------
 
     OPERATION(op, "test_cache_rand", {
         TEST(test::test_moesi_cache_rand());
@@ -166,9 +172,15 @@ void execution() {
         TEST(test::test_moesi_cache_l1l2l3_rand());
     });
 
+    OPERATION(op, "test_moesi_cache_l1l2l3_seq", {
+        TEST(test::test_moesi_cache_l1l2l3_seq());
+    });
+
     OPERATION(op, "test_moesi_l1_dma", {
         TEST(test::test_moesi_l1_dma());
     });
+
+    // -------- Bus Test --------
 
     OPERATION(op, "test_bus_route_table", {
         TEST(test::test_bus_route_table());

@@ -324,30 +324,6 @@ void PrivL1L2Moesi::p1_fetch() {
         return;
     }
 
-    if(l1d_req.type && !l1d_req.indexing && processing_line.find(l1d_req.lindex) == processing_line.end()) {
-        ProcessingPackage *pak = new ProcessingPackage;
-        pak->lindex = l1d_req.lindex;
-        pak->msg = nullptr;
-        pak->index_cycle = index_cycle;
-        simroot_assert(queue_index->push(pak));
-        processing_line.insert(pak->lindex);
-        block->pin(pak->lindex);
-        l1d_req.indexing = true;
-        return;
-    }
-
-    if(l1i_req.type && !l1i_req.indexing && processing_line.find(l1i_req.lindex) == processing_line.end()) {
-        ProcessingPackage *pak = new ProcessingPackage;
-        pak->lindex = l1i_req.lindex;
-        pak->msg = nullptr;
-        pak->index_cycle = index_cycle;
-        simroot_assert(queue_index->push(pak));
-        processing_line.insert(pak->lindex);
-        block->pin(pak->lindex);
-        l1i_req.indexing = true;
-        return;
-    }
-
     if(recv_msg && waiting_msg.size() < waiting_buf_size) {
         if(log_info) {
             sprintf(log_buf, "%s: Recv: @0x%lx, %d", logname.c_str(), recv_msg->line, recv_msg->type);
@@ -380,6 +356,31 @@ void PrivL1L2Moesi::p1_fetch() {
             return;
         }
     }
+
+    if(l1d_req.type && !l1d_req.indexing && processing_line.find(l1d_req.lindex) == processing_line.end()) {
+        ProcessingPackage *pak = new ProcessingPackage;
+        pak->lindex = l1d_req.lindex;
+        pak->msg = nullptr;
+        pak->index_cycle = index_cycle;
+        simroot_assert(queue_index->push(pak));
+        processing_line.insert(pak->lindex);
+        block->pin(pak->lindex);
+        l1d_req.indexing = true;
+        return;
+    }
+
+    if(l1i_req.type && !l1i_req.indexing && processing_line.find(l1i_req.lindex) == processing_line.end()) {
+        ProcessingPackage *pak = new ProcessingPackage;
+        pak->lindex = l1i_req.lindex;
+        pak->msg = nullptr;
+        pak->index_cycle = index_cycle;
+        simroot_assert(queue_index->push(pak));
+        processing_line.insert(pak->lindex);
+        block->pin(pak->lindex);
+        l1i_req.indexing = true;
+        return;
+    }
+
 }
 
 void PrivL1L2Moesi::p2_index() {
@@ -602,7 +603,20 @@ void PrivL1L2Moesi::p2_index() {
                 mshr->state == MSHR_ETOI || 
                 mshr->state == MSHR_OTOI
             ) {
+                uint32_t mshr_finish_flg = mshr->finish_flag;
                 mshrs->remove(lindex);
+                if(mshr_finish_flg & MSHR_FIFLG_L1DREQM) {
+                    simroot_assert(mshr = mshrs->alloc(lindex));
+                    mshr->state = MSHR_ITOM;
+                    mshr->finish_flag = mshr_finish_flg;
+                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id);
+                }
+                else if((mshr_finish_flg & MSHR_FIFLG_L1DREQS) || (mshr_finish_flg & MSHR_FIFLG_L1IREQ)) {
+                    simroot_assert(mshr = mshrs->alloc(lindex));
+                    mshr->state = MSHR_ITOS;
+                    mshr->finish_flag = mshr_finish_flg;
+                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id);
+                }
             }
             else {
                 simroot_assert(0);
