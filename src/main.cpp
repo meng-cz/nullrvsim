@@ -16,13 +16,13 @@
 
 #define TEST(x) printf("Execute: %s\n", #x); if(!x) printf("Test %s failed\n", #x);
 
-#define OPERATION(op, name, statement) {if(op.compare(name)==0) { { statement } return;}};
+#define OPERATION(op, name, statement) do{if(op.compare(name)==0) { { statement } return;}}while(0)
 
-#define ASSERT_ARGS(vec, num, info) {if(vec.size() != num){ printf("Args %s:  \"%s\"\n", #vec,  info); return;}};
+#define ASSERT_ARGS(vec, num, info) do{if(vec.size() != num){ printf("Args %s:  \"%s\"\n", #vec,  info); return;}}while(0)
 
-#define ASSERT_MORE_ARGS(vec, num, info) {if(vec.size() < num){ printf("Args %s:  \"%s\"\n", #vec,  info); return;}};
+#define ASSERT_MORE_ARGS(vec, num, info) do{if(vec.size() < num){ printf("Args %s:  \"%s\"\n", #vec,  info); return;}}while(0)
 
-#define PRINT_ARGS(vec) { std::cout << #vec": "; for(auto &e : vec) std::cout << e << " , "; std::cout << std::endl;};
+#define PRINT_ARGS(vec) do{ std::cout << #vec": "; for(auto &e : vec) std::cout << e << " , "; std::cout << std::endl;}while(0)
 
 void execution();
 
@@ -128,8 +128,13 @@ void execution() {
     // -------- Launch --------
 
     OPERATION(op, "mp_moesi_l1l2", {
-        ASSERT_MORE_ARGS(W, 1, "elf_path")
+        ASSERT_MORE_ARGS(W, 1, "elf_path");
         TEST(launch::mp_moesi_l1l2(W));
+    });
+
+    OPERATION(op, "mp_moesi_l3", {
+        ASSERT_MORE_ARGS(W, 1, "elf_path");
+        TEST(launch::mp_moesi_l3(W));
     });
 
     // -------- Simulator Test --------

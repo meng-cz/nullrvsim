@@ -69,6 +69,10 @@ const uint32_t CHANNEL_ACK = 0;
 const uint32_t CHANNEL_RESP = 1;
 const uint32_t CHANNEL_REQ = 2;
 
+const uint32_t CHANNEL_WIDTH_ACK = 32;
+const uint32_t CHANNEL_WIDTH_RESP = 64;
+const uint32_t CHANNEL_WIDTH_REQ = 96;
+
 typedef struct {
     uint32_t    type;
     uint32_t    arg = 0;
