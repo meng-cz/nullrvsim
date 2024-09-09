@@ -332,7 +332,7 @@ bool test_cache_1l24l1_seq_wr() {
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
     MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
-    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32, nullptr);
 
     BusMapping1L24L1 bus_mapping;
 
@@ -349,7 +349,8 @@ bool test_cache_1l24l1_seq_wr() {
         bus,
         0,
         &bus_mapping,
-        string("l2cache")
+        string("l2cache"),
+        nullptr
     );
 
     param.set_offset = 5;
@@ -466,7 +467,7 @@ bool test_cache_1l24l1_rand_wr() {
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
     MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
-    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32, nullptr);
 
     BusMapping1L24L1 bus_mapping;
     
@@ -483,7 +484,8 @@ bool test_cache_1l24l1_rand_wr() {
         bus,
         0,
         &bus_mapping,
-        string("l2cache")
+        string("l2cache"),
+        nullptr
     );
 
     param.set_offset = 5;
@@ -638,7 +640,7 @@ bool test_moesi_l1l2_dcache() {
     param_l2.index_latency = 4;
     param_l2.index_width = 1;
 
-    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2");
+    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2", nullptr);
     simroot::add_sim_object(&l1l2, "l1", 1);
 
     l1l2.log_info = bus.debug_log;
@@ -728,7 +730,7 @@ bool test_moesi_l1l2_icache() {
     param_l2.index_latency = 4;
     param_l2.index_width = 1;
 
-    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2");
+    PrivL1L2Moesi l1l2(param_l2, param_l1d, param_l1i, &bus, 1, &busmap, "l1l2", nullptr);
     simroot::add_sim_object(&l1l2, "l1", 1);
 
     l1l2.log_info = bus.debug_log;
@@ -791,7 +793,7 @@ bool test_moesi_cache_l1l2l3_seq() {
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
     MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
-    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32, nullptr);
 
     BusMapping1L24L1 bus_mapping;
 
@@ -808,7 +810,8 @@ bool test_moesi_cache_l1l2l3_seq() {
         bus,
         0,
         &bus_mapping,
-        string("l3cache")
+        string("l3cache"),
+        nullptr
     );
 
     // l3->do_log = true;
@@ -842,7 +845,8 @@ bool test_moesi_cache_l1l2l3_seq() {
             bus,
             i+2,
             &bus_mapping,
-            string("l1-") + to_string(i)
+            string("l1-") + to_string(i),
+            nullptr
         );
         // l1l2s[i]->log_info = true;
         l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
@@ -951,7 +955,7 @@ bool test_moesi_cache_l1l2l3_rand() {
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
     MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
-    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 1, 32, nullptr);
 
     BusMapping1L24L1 bus_mapping;
 
@@ -968,7 +972,8 @@ bool test_moesi_cache_l1l2l3_rand() {
         bus,
         0,
         &bus_mapping,
-        string("l3cache")
+        string("l3cache"),
+        nullptr
     );
 
     simcache::CacheParam param_l1i, param_l1d, param_l2;
@@ -1000,7 +1005,8 @@ bool test_moesi_cache_l1l2l3_rand() {
             bus,
             i+2,
             &bus_mapping,
-            string("l1-") + to_string(i)
+            string("l1-") + to_string(i),
+            nullptr
         );
         l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
         l1ds[i] = new PrivL1L2MoesiL1DPort(l1l2s[i]);
@@ -1148,7 +1154,7 @@ bool test_moesi_cache_l3nuca_rand() {
     const SizeT memsz = 1024UL * 1024UL * 16UL;
     uint8_t *pmem = new uint8_t[memsz];
     MemAddrCtrl1L24L1 mem_addr_ctrl(memsz);
-    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 4, 32);
+    MemoryNode *mem = new MemoryNode(pmem, &mem_addr_ctrl, bus, 4, 32, nullptr);
 
     BusMapping1L24L1NUCA bus_mapping;
 
@@ -1169,7 +1175,8 @@ bool test_moesi_cache_l3nuca_rand() {
             bus,
             i,
             &bus_mapping,
-            string("l3-") + to_string(i)
+            string("l3-") + to_string(i),
+            nullptr
         );
     }
     
@@ -1202,7 +1209,8 @@ bool test_moesi_cache_l3nuca_rand() {
             bus,
             i+5,
             &bus_mapping,
-            string("l1-") + to_string(i)
+            string("l1-") + to_string(i),
+            nullptr
         );
         l1is[i] = new PrivL1L2MoesiL1IPort(l1l2s[i]);
         l1ds[i] = new PrivL1L2MoesiL1DPort(l1l2s[i]);

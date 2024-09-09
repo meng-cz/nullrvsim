@@ -188,7 +188,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
 
     MultiCoreL1L2AddrMap memaddrmap(param, 0);
     assert(busmap.get_subnode_port(0, &busport));
-    std::unique_ptr<MemoryNode> memory =  std::make_unique<MemoryNode>(pmem, &memaddrmap, bus.get(), busport, 32);
+    std::unique_ptr<MemoryNode> memory =  std::make_unique<MemoryNode>(pmem, &memaddrmap, bus.get(), busport, 32, nullptr);
     simroot::add_sim_object(memory.get(), "MemoryNode", 1);
 
     simcache::CacheParam cp;
@@ -202,7 +202,7 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
 
     assert(busmap.get_homenode_port(0, &busport));
     std::unique_ptr<LLCMoesiDirNoi> l2 =  std::make_unique<LLCMoesiDirNoi>(
-        cp, bus.get(), busport, &busmap, "l2cache"
+        cp, bus.get(), busport, &busmap, "l2cache", nullptr
     );
     simroot::add_sim_object(l2.get(), "L2Cache", 1);
 

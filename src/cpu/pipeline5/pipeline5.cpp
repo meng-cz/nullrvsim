@@ -201,6 +201,9 @@ void PipeLine5CPU::process_pipeline_2_decode() {
         dec.opcode == RV64OPCode::amo
     );
 
+    p5dec.mem_start_tick = p5dec.mem_finish_tick = 0;
+    p5dec.cache_missed = false;
+
     p2_result.first = true;
 };
 
@@ -348,9 +351,8 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         return;
     }
 
-    p4_result.second = p4_workload.second;
-    P5InstDecoded &p5inst = p4_result.second;
-    RV64InstDecoded &inst = p4_result.second.inst;
+    P5InstDecoded &p5inst = p4_workload.second;
+    RV64InstDecoded &inst = p4_workload.second.inst;
 
     if(log_info) {
         sprintf(log_buf, "CPU%d P4: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
@@ -374,6 +376,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 p5inst.arg0 = 1;
             }
             else if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             else {
@@ -403,6 +406,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 8);
             }
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             dcache_prefetch(vaddr);
@@ -423,6 +427,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             SimError res = io_dcache_port->store(paddr, 0, &value, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 0);
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             uint32_t len = isa::rv64_ls_width_to_length(inst.param.amo.wid);
@@ -438,12 +443,14 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 8);
             }
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             assert(SimError::success == isa::perform_amo_op(inst.param.amo, &stvalue, previous, value));
             res = io_dcache_port->store(paddr, len, &stvalue, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             dcache_prefetch(vaddr);
@@ -466,6 +473,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             SimError res = io_dcache_port->load(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             if(log_info) {
@@ -502,6 +510,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             SimError res = io_dcache_port->store(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
+                p5inst.cache_missed = true;
                 return;
             }
             if(log_info) {
@@ -513,6 +522,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
     }
     // Todo
         
+    p4_result.second = p4_workload.second;
     p4_result.first = true;
 }
 
@@ -735,6 +745,21 @@ void PipeLine5CPU::process_pipeline_5_commit() {
         log_file_commited_inst->flush();
     }
 
+    if(inst.opcode == RV64OPCode::load || inst.opcode == RV64OPCode::loadfp) {
+        statistic.ld_inst_cnt ++;
+        if(p5inst.cache_missed) statistic.ld_cache_miss_count ++;
+        else statistic.ld_cache_hit_count ++;
+        simroot_assert(p5inst.mem_finish_tick >= p5inst.mem_start_tick);
+        statistic.ld_mem_tick_sum += (p5inst.mem_finish_tick - p5inst.mem_start_tick);
+    }
+    else if(inst.opcode == RV64OPCode::store || inst.opcode == RV64OPCode::storefp) {
+        statistic.st_inst_cnt ++;
+        if(p5inst.cache_missed) statistic.st_cache_miss_count ++;
+        else statistic.st_cache_hit_count ++;
+        simroot_assert(p5inst.mem_finish_tick >= p5inst.mem_start_tick);
+        statistic.st_mem_tick_sum += (p5inst.mem_finish_tick - p5inst.mem_start_tick);
+    }
+
     p5_result.first = true;
 };
 
@@ -764,8 +789,6 @@ void PipeLine5CPU::apply_next_tick() {
         return;
     }
     
-    statistic.total_tick_processed++;
-
     bool p5_finished = p5_workload.first && p5_result.first;
     bool p4_finished = p4_workload.first && p4_result.first;
     bool p3_finished = p3_workload.first && p3_result.first;
@@ -794,6 +817,7 @@ void PipeLine5CPU::apply_next_tick() {
         p4_result.first = false;
         p5_workload.first = true;
         p5_workload.second = p4_result.second;
+        p5_workload.second.mem_finish_tick = statistic.total_tick_processed;
     }
     if(p3_finished && p3_result.second.passp4 && !p4_workload.first && !p5_workload.first) {
         // P3 -> P5
@@ -808,6 +832,7 @@ void PipeLine5CPU::apply_next_tick() {
         p3_result.first = false;
         p4_workload.first = true;
         p4_workload.second = p3_result.second;
+        p4_workload.second.mem_start_tick = statistic.total_tick_processed;
     }
     if(p2_finished && p2_result.second.passp3 && p2_result.second.passp4 && !p3_workload.first && !p4_workload.first && !p5_workload.first) {
         // P2 -> P5
@@ -822,6 +847,7 @@ void PipeLine5CPU::apply_next_tick() {
         p2_result.first = false;
         p4_workload.first = true;
         p4_workload.second = p2_result.second;
+        p4_workload.second.mem_start_tick = statistic.total_tick_processed;
     }
     if(p2_finished && !p2_result.second.passp3 && !p3_workload.first) {
         // P2 -> P3
@@ -838,6 +864,8 @@ void PipeLine5CPU::apply_next_tick() {
     }
 
     current_tlb_occupy_dcache = false;
+
+    statistic.total_tick_processed++;
 
     if(apply_pc_redirect) {
         apply_pc_redirect = false;
@@ -882,18 +910,26 @@ void PipeLine5CPU::print_statistic(std::ofstream &ofile) {
     #define PIPELINE_5_GENERATE_PRINTSTATISTIC(n) ofile << #n << ": " << statistic.n << "\n" ;
     PIPELINE_5_GENERATE_PRINTSTATISTIC(total_tick_processed)
     PIPELINE_5_GENERATE_PRINTSTATISTIC(finished_inst_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_1_stalled_fetch_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_1_stalled_busy_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_nop_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_busy_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_flush_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_nop_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_busy_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_waitreg_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_nop_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_amo_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_fetch_count)
-    PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_busy_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_1_stalled_fetch_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_1_stalled_busy_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_nop_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_busy_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_2_stalled_flush_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_nop_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_busy_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_3_stalled_waitreg_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_nop_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_amo_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_fetch_count)
+    // PIPELINE_5_GENERATE_PRINTSTATISTIC(pipeline_4_stalled_busy_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(ld_cache_miss_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(ld_cache_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(ld_inst_cnt)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(ld_mem_tick_sum)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(st_cache_miss_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(st_cache_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(st_inst_cnt)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(st_mem_tick_sum)
     #undef PIPELINE_5_GENERATE_PRINTSTATISTIC
 };
 

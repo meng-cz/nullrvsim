@@ -174,6 +174,15 @@ inline void unpack_bit_position(T n, std::vector<uint32_t> *out) {
     }
 }
 
+class Avg64 {
+public:
+    uint64_t cnt = 0;
+    double val = 0;
+    inline void insert(double v) {
+        val = ((v - val) / (cnt + 1) + val);
+        cnt ++;
+    }
+};
 
 class SimObject {
 public:

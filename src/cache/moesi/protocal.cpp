@@ -57,20 +57,22 @@ string get_cc_msg_type_name_str(uint32_t type) {
     return string("unknown") + to_string((int)type);
 };
 
-const uint32_t head_size = 16;
+const uint32_t head_size = 20;
 
 void construct_msg_pack(CacheCohenrenceMsg &msg, vector<uint8_t> &buf) {
     buf.resize(msg.data.size() + head_size);
     *((uint32_t*)(buf.data() + 0)) = msg.type;
     *((uint32_t*)(buf.data() + 4)) = msg.arg;
-    *((uint64_t*)(buf.data() + 8)) = msg.line;
+    *((uint32_t*)(buf.data() + 8)) = msg.transid;
+    *((uint64_t*)(buf.data() + 12)) = msg.line;
     if(!msg.data.empty()) memcpy(buf.data() + head_size, msg.data.data(), msg.data.size());
 }
 
 void parse_msg_pack(vector<uint8_t> &buf, CacheCohenrenceMsg &msg) {
     msg.type = *((uint32_t*)(buf.data() + 0));
     msg.arg = *((uint32_t*)(buf.data() + 4));
-    msg.line = *((uint64_t*)(buf.data() + 8));
+    msg.transid = *((uint32_t*)(buf.data() + 8));
+    msg.line = *((uint64_t*)(buf.data() + 12));
     if(buf.size() > head_size) {
         msg.data.resize(buf.size() - head_size);
         memcpy(msg.data.data(), buf.data() + head_size, msg.data.size());

@@ -5,6 +5,7 @@
 
 #include "cache/cacheinterface.h"
 #include "cache/cachecommon.h"
+#include "cache/trace.h"
 
 #include "bus/businterface.h"
 
@@ -29,7 +30,8 @@ public:
         BusInterfaceV2 *bus,
         BusPortT my_port_id,
         BusPortMapping *busmap,
-        string logname
+        string logname,
+        CacheEventTrace *trace
     );
 
     // SimObject
@@ -60,7 +62,7 @@ protected:
 
     std::list<ReadyToSend> send_buf;
     uint32_t send_buf_size = 8;
-    inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg) {
+    inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, uint32_t transid) {
         send_buf.emplace_back();
         auto &send = send_buf.back();
         send.dst = dst;
@@ -69,9 +71,10 @@ protected:
         tmp.type = type;
         tmp.line = line;
         tmp.arg = arg;
+        tmp.transid = transid;
         construct_msg_pack(tmp, send.msg);
     }
-    inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, void* linebuf) {
+    inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, void* linebuf, uint32_t transid) {
         send_buf.emplace_back();
         auto &send = send_buf.back();
         send.dst = dst;
@@ -80,6 +83,7 @@ protected:
         tmp.type = type;
         tmp.line = line;
         tmp.arg = arg;
+        tmp.transid = transid;
         tmp.data.resize(CACHE_LINE_LEN_BYTE);
         cache_line_copy(tmp.data.data(), linebuf);
         construct_msg_pack(tmp, send.msg);
@@ -87,6 +91,7 @@ protected:
 
     inline void cur_recieve_msg() {
         if(recv_msg) return;
+        uint32_t transid = 0;
         vector<uint8_t> buf;
         for(uint32_t c = 0; c < CHANNEL_CNT; c++) {
             if(!bus->can_recv(my_port_id, c)) continue;
@@ -190,6 +195,8 @@ protected:
         uint32_t        type = 0;
         bool            indexing = false;
         LineIndexT      lindex = 0;
+        uint64_t        start_tick = 0;
+        uint32_t        trans_id = 0;
         vector<uint8_t> data;
     } L1Request;
 
@@ -248,6 +255,8 @@ protected:
 
 // ------------- Log ---------------
 
+    CacheEventTrace *trace = nullptr;
+
     struct {
         uint64_t    l1i_hit_count = 0;
         uint64_t    l1i_miss_count = 0;
@@ -256,6 +265,8 @@ protected:
 
         uint64_t    l2_hit_count = 0;
         uint64_t    l2_miss_count = 0;
+
+
     } statistic;
 
     string logname;

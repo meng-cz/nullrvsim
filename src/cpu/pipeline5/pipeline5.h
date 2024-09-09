@@ -132,6 +132,9 @@ protected:
         RawDataT arg1;
         bool passp3 = false;
         bool passp4 = false;
+        uint64_t mem_start_tick = 0;
+        uint64_t mem_finish_tick = 0;
+        bool cache_missed = false;
     } P5InstDecoded;
 
     typedef struct {
@@ -311,6 +314,17 @@ struct {
     uint64_t pipeline_4_stalled_fetch_count = 0;
     uint64_t pipeline_4_stalled_busbusy_count = 0;
     uint64_t pipeline_4_stalled_busy_count = 0;
+
+    uint64_t ld_cache_miss_count = 0;
+    uint64_t ld_cache_hit_count = 0;
+    uint64_t ld_inst_cnt = 0;
+    uint64_t ld_mem_tick_sum = 0;
+
+    uint64_t st_cache_miss_count = 0;
+    uint64_t st_cache_hit_count = 0;
+    uint64_t st_inst_cnt = 0;
+    uint64_t st_mem_tick_sum = 0;
+
 } statistic;
 
 };

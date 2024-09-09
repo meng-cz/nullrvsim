@@ -76,6 +76,7 @@ const uint32_t CHANNEL_WIDTH_REQ = 96;
 typedef struct {
     uint32_t    type;
     uint32_t    arg = 0;
+    uint32_t    transid = 0;
     LineIndexT  line = 0;
     std::vector<uint8_t>    data;
 } CacheCohenrenceMsg;

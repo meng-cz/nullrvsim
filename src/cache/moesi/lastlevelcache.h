@@ -3,6 +3,7 @@
 
 #include "cache/cacheinterface.h"
 #include "cache/cachecommon.h"
+#include "cache/trace.h"
 
 #include "protocal.h"
 
@@ -26,7 +27,8 @@ public:
         BusInterfaceV2 *bus,
         BusPortT my_port_id,
         BusPortMapping *busmap,
-        string logname
+        string logname,
+        CacheEventTrace *trace
     );
 
     virtual void on_current_tick();
@@ -82,6 +84,7 @@ protected:
         uint32_t        type;
         LineIndexT      lindex;
         uint32_t        arg;
+        uint32_t        transid;
 
         uint32_t        index_cycle;
 
@@ -99,7 +102,7 @@ protected:
         bool            delay_commit = false;
         bool            dir_evict = false;
 
-        inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg) {
+        inline void push_send_buf(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, uint32_t transid) {
             need_send.emplace_back();
             auto &send = need_send.back();
             send.dst = dst;
@@ -108,9 +111,10 @@ protected:
             tmp.type = type;
             tmp.line = line;
             tmp.arg = arg;
+            tmp.transid = transid;
             construct_msg_pack(tmp, send.msg);
         }
-        inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, uint8_t* linebuf) {
+        inline void push_send_buf_with_line(BusPortT dst, uint32_t channel, uint32_t type, LineIndexT line, uint32_t arg, uint8_t* linebuf, uint32_t transid) {
             need_send.emplace_back();
             auto &send = need_send.back();
             send.dst = dst;
@@ -119,6 +123,7 @@ protected:
             tmp.type = type;
             tmp.line = line;
             tmp.arg = arg;
+            tmp.transid = transid;
             tmp.data.resize(CACHE_LINE_LEN_BYTE);
             cache_line_copy(tmp.data.data(), linebuf);
             construct_msg_pack(tmp, send.msg);
@@ -135,6 +140,9 @@ protected:
     void p1_fetch();
     void p2_index();
     void p3_process();
+
+    CacheEventTrace *trace = nullptr;
+
 };
 
 

@@ -15,8 +15,9 @@ PrivL1L2Moesi::PrivL1L2Moesi(
     BusInterfaceV2 *bus,
     BusPortT my_port_id,
     BusPortMapping *busmap,
-    string logname
-) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname) {
+    string logname,
+    CacheEventTrace *trace
+) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace) {
     do_on_current_tick = 6;
     do_apply_next_tick = 1;
 
@@ -117,6 +118,10 @@ SimError PrivL1L2Moesi::l1i_load(PhysAddrT paddr, uint32_t len, void *buf, vecto
         l1i_req.indexing = false;
         l1i_req.lindex = lindex;
         l1i_req.data.clear();
+        if(trace) {
+            l1i_req.trans_id = trace->alloc_trans_id();
+            trace->insert_event(l1i_req.trans_id, CacheEvent::L1_LD_MISS);
+        }
         statistic.l1i_miss_count++;
         return SimError::miss;
     }
@@ -166,6 +171,10 @@ SimError PrivL1L2Moesi::l1d_load(PhysAddrT paddr, uint32_t len, void *buf, vecto
         l1d_req.indexing = false; 
         l1d_req.lindex = lindex;
         l1d_req.data.clear();
+        if(trace) {
+            l1d_req.trans_id = trace->alloc_trans_id();
+            trace->insert_event(l1d_req.trans_id, CacheEvent::L1_LD_MISS);
+        }
         statistic.l1d_miss_count++;
         return SimError::miss;
     }
@@ -203,6 +212,10 @@ SimError PrivL1L2Moesi::l1d_store(PhysAddrT paddr, uint32_t len, void *buf, vect
         l1d_req.indexing = false;
         l1d_req.lindex = lindex;
         l1d_req.data.clear();
+        if(trace) {
+            l1d_req.trans_id = trace->alloc_trans_id();
+            trace->insert_event(l1d_req.trans_id, CacheEvent::L1_ST_MISS);
+        }
         statistic.l1d_miss_count++;
         return SimError::miss;
     }
@@ -404,6 +417,7 @@ void PrivL1L2Moesi::p2_index() {
     if(pak->msg) {
         uint32_t type = pak->msg->type;
         uint32_t arg = pak->msg->arg;
+        uint32_t transid = pak->msg->transid;
         vector<uint8_t> &data = pak->msg->data;
 
         if(log_info) {
@@ -412,7 +426,7 @@ void PrivL1L2Moesi::p2_index() {
         }
 
         if(type == MSG_INVALID) {
-            push_send_buf(arg, CHANNEL_ACK, MSG_INVALID_ACK, lindex, 0);
+            push_send_buf(arg, CHANNEL_ACK, MSG_INVALID_ACK, lindex, 0, transid);
             block->remove_line(lindex);
             l1i_block->remove_line(lindex);
             l1d_block->remove_line(lindex);
@@ -461,7 +475,8 @@ void PrivL1L2Moesi::p2_index() {
                 }
             }
             if(getm_finished) {
-                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
+                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id, transid);
+                if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
                 handle_new_line_nolock(lindex, mshr, CC_MODIFIED);
             }
         }
@@ -481,16 +496,17 @@ void PrivL1L2Moesi::p2_index() {
             simroot_assert(!hit || !mshr_handle);
             if(hit) {
                 snoop_l1d_and_set_readonly(lindex, p_line->data);
-                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETS_RESP, lindex, 1, p_line->data);
+                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETS_RESP, lindex, 1, p_line->data, transid);
                 p_line->state = CC_OWNED;
             }
             else if(mshr_handle) {
                 snoop_l1d_and_set_readonly(lindex, mshr->line_buf);
-                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETS_RESP, lindex, 1, mshr->line_buf);
+                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETS_RESP, lindex, 1, mshr->line_buf, transid);
                 if(mshr->state == MSHR_MTOI || mshr->state == MSHR_ETOI || mshr->state == MSHR_STOI) {
                     mshr->state = MSHR_OTOI;
                 }
             }
+            if(trace) trace->insert_event(transid, CacheEvent::L2_TRANSMIT);
         }
         else if(type == MSG_GETM_FORWARD) {
             TagedCacheLine *p_line = nullptr;
@@ -508,12 +524,12 @@ void PrivL1L2Moesi::p2_index() {
             simroot_assert(!hit || !mshr_handle);
             if(hit) {
                 snoop_l1_and_invalid(lindex, p_line->data);
-                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETM_RESP, lindex, 0, p_line->data);
+                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETM_RESP, lindex, 0, p_line->data, transid);
                 block->remove_line(lindex);
             }
             else if(mshr_handle) {
                 snoop_l1_and_invalid(lindex, p_line->data);
-                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETM_RESP, lindex, 0, mshr->line_buf);
+                push_send_buf_with_line(arg, CHANNEL_RESP, MSG_GETM_RESP, lindex, 0, mshr->line_buf, transid);
                 switch (mshr->state)
                 {
                 case MSHR_STOM:
@@ -528,6 +544,7 @@ void PrivL1L2Moesi::p2_index() {
                     break;
                 }
             }
+            if(trace) trace->insert_event(transid, CacheEvent::L2_TRANSMIT);
         }
         else if(type == MSG_GETM_ACK) {
             bool getm_finished = false;
@@ -552,7 +569,8 @@ void PrivL1L2Moesi::p2_index() {
                 }
             }
             if(getm_finished) {
-                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
+                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id, transid);
+                if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
                 handle_new_line_nolock(lindex, mshr, CC_MODIFIED);
             }
         }
@@ -561,8 +579,9 @@ void PrivL1L2Moesi::p2_index() {
             simroot_assert((mshr = mshrs->get(lindex)) && MSHR_ITOS);
             cache_line_copy(mshr->line_buf, data.data());
             if(arg > 0) {
-                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
+                push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id, transid);
             }
+            if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
             handle_new_line_nolock(lindex, mshr, (arg > 0)?(CC_SHARED):(CC_EXCLUSIVE));
         }
         else if(type == MSG_GETM_RESP) {
@@ -574,20 +593,23 @@ void PrivL1L2Moesi::p2_index() {
                 mshr->get_data_ready = 1;
             }
             else {
-                if(arg == 0) push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
+                if(arg == 0) push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id, transid);
                 cache_line_copy(mshr->line_buf, data.data());
+                if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
                 handle_new_line_nolock(lindex, mshr, CC_MODIFIED);
             }
         }
         else if(type == MSG_GET_RESP_MEM) {
-            push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id);
+            push_send_buf(hn_port, CHANNEL_ACK, MSG_GET_ACK, lindex, my_port_id, transid);
             MSHREntry *mshr = nullptr;
             simroot_assert(mshr = mshrs->get(lindex));
             cache_line_copy(mshr->line_buf, data.data());
             if(mshr->state == MSHR_ITOM) {
+                if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
                 handle_new_line_nolock(lindex, mshr, CC_MODIFIED);
             }
             else if(mshr->state == MSHR_ITOS) {
+                if(trace) trace->insert_event(transid, CacheEvent::L2_FINISH);
                 handle_new_line_nolock(lindex, mshr, CC_EXCLUSIVE);
             }
             else {
@@ -609,13 +631,13 @@ void PrivL1L2Moesi::p2_index() {
                     simroot_assert(mshr = mshrs->alloc(lindex));
                     mshr->state = MSHR_ITOM;
                     mshr->finish_flag = mshr_finish_flg;
-                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id);
+                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id, (trace?(trace->alloc_trans_id()):0));
                 }
                 else if((mshr_finish_flg & MSHR_FIFLG_L1DREQS) || (mshr_finish_flg & MSHR_FIFLG_L1IREQ)) {
                     simroot_assert(mshr = mshrs->alloc(lindex));
                     mshr->state = MSHR_ITOS;
                     mshr->finish_flag = mshr_finish_flg;
-                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id);
+                    push_send_buf(hn_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id, (trace?(trace->alloc_trans_id()):0));
                 }
             }
             else {
@@ -626,15 +648,22 @@ void PrivL1L2Moesi::p2_index() {
     else {
         // 检查L1REQ
         uint32_t req = L1REQ_GETS;
+        uint32_t transid = 0;
         bool resp_i = false, resp_d = false;
 
         if(l1i_req.lindex == lindex && l1i_req.type == L1REQ_GETS) {
             resp_i = true;
+            transid = l1i_req.trans_id;
         }
         if(l1d_req.lindex == lindex && l1d_req.type) {
             resp_d = true;
             if(l1d_req.type == L1REQ_GETM) {
                 req = L1REQ_GETM;
+            }
+            transid = l1d_req.trans_id;
+            if(resp_i) {
+                if(trace) trace->cancel_transaction(l1i_req.trans_id);
+                l1i_req.trans_id = transid;
             }
         }
 
@@ -647,6 +676,7 @@ void PrivL1L2Moesi::p2_index() {
             TagedCacheLine *pline = nullptr;
             MSHREntry *mshr = nullptr;
             if(block->get_line(lindex, &pline, true)) {
+                if(trace) trace->insert_event(transid, CacheEvent::L2_HIT);
                 if(resp_i) {
                     pline->flag |= L2FLG_IN_I;
                     insert_to_l1i(lindex, pline->data);
@@ -658,6 +688,7 @@ void PrivL1L2Moesi::p2_index() {
                 statistic.l2_hit_count ++;
             }
             else if(mshr = mshrs->get(lindex)) {
+                if(trace) trace->insert_event(transid, CacheEvent::L2_HIT);
                 if(mshr->state == MSHR_OTOM || mshr->state == MSHR_STOM) {
                     if(resp_i) {
                         mshr->line_flag |= L2FLG_IN_I;
@@ -678,8 +709,9 @@ void PrivL1L2Moesi::p2_index() {
                 mshr->state = MSHR_ITOS;
                 if(resp_i) mshr->finish_flag |= MSHR_FIFLG_L1IREQ;
                 if(resp_d) mshr->finish_flag |= MSHR_FIFLG_L1DREQS;
-                push_send_buf(hn_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id);
+                push_send_buf(hn_port, CHANNEL_REQ, MSG_GETS, lindex, my_port_id, transid);
                 statistic.l2_miss_count ++;
+                if(trace) trace->insert_event(transid, CacheEvent::L2_MISS);
             }
             else {
                 if(resp_i) l1i_req.indexing = false;
@@ -692,6 +724,7 @@ void PrivL1L2Moesi::p2_index() {
             bool is_miss = true;
             if(block->get_line(lindex, &pline, true)) {
                 if(pline->state == CC_EXCLUSIVE || pline->state == CC_MODIFIED) {
+                    if(trace) trace->insert_event(transid, CacheEvent::L2_HIT);
                     pline->flag |= L2FLG_IN_D;
                     pline->flag |= L2FLG_IN_D_W;
                     insert_to_l1d(lindex, pline->data, true);
@@ -703,6 +736,7 @@ void PrivL1L2Moesi::p2_index() {
                     mshr->line_flag |= L2FLG_IN_D;
                     mshr->line_flag |= L2FLG_IN_D_W;
                     mshr->finish_flag |= MSHR_FIFLG_L1DREQM;
+                    if(trace) trace->insert_event(transid, CacheEvent::L2_HIT);
                 }
                 else {
                     l1d_req.indexing = false;
@@ -727,8 +761,9 @@ void PrivL1L2Moesi::p2_index() {
                     mshr->finish_flag = MSHR_FIFLG_L1DREQM;
                     mshr->state = MSHR_ITOM;
                 }
-                push_send_buf(hn_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id);
+                push_send_buf(hn_port, CHANNEL_REQ, MSG_GETM, lindex, my_port_id, transid);
                 statistic.l2_miss_count ++;
+                if(trace) trace->insert_event(transid, CacheEvent::L2_MISS);
             }
             else if(is_miss) {
                 l1d_req.indexing = false;
@@ -826,19 +861,19 @@ void PrivL1L2Moesi::handle_new_line_nolock(LineIndexT lindex, MSHREntry *mshr, u
     {
     case CC_EXCLUSIVE:
         mshr->state = MSHR_ETOI;
-        push_send_buf(hn_port, CHANNEL_REQ, MSG_PUTE, replaced, my_port_id);
+        push_send_buf(hn_port, CHANNEL_REQ, MSG_PUTE, replaced, my_port_id, (trace?(trace->alloc_trans_id()):0));
         break;
     case CC_MODIFIED:
         mshr->state = MSHR_MTOI;
-        push_send_buf_with_line(hn_port, CHANNEL_REQ, MSG_PUTM, replaced, my_port_id, replacedline.data);
+        push_send_buf_with_line(hn_port, CHANNEL_REQ, MSG_PUTM, replaced, my_port_id, replacedline.data, (trace?(trace->alloc_trans_id()):0));
         break;
     case CC_SHARED:
         mshr->state = MSHR_STOI;
-        push_send_buf(hn_port, CHANNEL_REQ, MSG_PUTS, replaced, my_port_id);
+        push_send_buf(hn_port, CHANNEL_REQ, MSG_PUTS, replaced, my_port_id, (trace?(trace->alloc_trans_id()):0));
         break;
     case CC_OWNED:
         mshr->state = MSHR_OTOI;
-        push_send_buf_with_line(hn_port, CHANNEL_REQ, MSG_PUTO, replaced, my_port_id, replacedline.data);
+        push_send_buf_with_line(hn_port, CHANNEL_REQ, MSG_PUTO, replaced, my_port_id, replacedline.data, (trace?(trace->alloc_trans_id()):0));
         break;
     default:
         assert(0);
@@ -858,6 +893,7 @@ void PrivL1L2Moesi::insert_to_l1i(LineIndexT lindex, void * line_buf) {
 
     if(l1i_req.lindex == lindex) {
         l1i_req.type = l1i_req.lindex = l1i_req.indexing = 0;
+        if(trace) trace->insert_event(l1i_req.trans_id, CacheEvent::L1_FINISH);
     }
 
     newline.flag = newline.state = 0;
@@ -903,6 +939,7 @@ void PrivL1L2Moesi::insert_to_l1d(LineIndexT lindex, void * line_buf, bool writa
         }
         else {
             l1d_req.type = l1d_req.lindex = l1d_req.indexing = 0;
+            if(trace) trace->insert_event(l1d_req.trans_id, CacheEvent::L1_FINISH);
         }
     }
 

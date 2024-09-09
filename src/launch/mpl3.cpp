@@ -28,6 +28,7 @@ using simcache::moesi::LLCMoesiDirNoi;
 using simcache::moesi::DMAL1MoesiDirNoi;
 using simcache::moesi::MemoryNode;
 
+using simcache::get_global_cache_event_trace;
 using simcache::MemCtrlLineAddrMap;
 
 using simbus::BusNodeT;
@@ -240,7 +241,9 @@ bool mp_moesi_l3(std::vector<string> &argv) {
     vector<unique_ptr<MemoryNode>> mem_nodes(param.mem_node_num);
     for(uint32_t i = 0; i < param.mem_node_num; i++) {
         mem_addr_maps[i] = make_unique<MultiCoreL3AddrMap>(param, i);
-        mem_nodes[i] = std::make_unique<MemoryNode>(pmem, mem_addr_maps[i].get(), bus.get(), busmap.mem_ports[i], 32);
+        mem_nodes[i] = std::make_unique<MemoryNode>(
+            pmem, mem_addr_maps[i].get(), bus.get(), busmap.mem_ports[i], 32, get_global_cache_event_trace()
+        );
         simroot::add_sim_object(mem_nodes[i].get(), "MemoryNode" + to_string(i), 1);
         
     }
@@ -259,7 +262,9 @@ bool mp_moesi_l3(std::vector<string> &argv) {
     vector<unique_ptr<LLCMoesiDirNoi>> l3s(param.cpu_num);
     for(uint32_t i = 0; i < param.cpu_num; i++) {
         cp.nuca_index = i;
-        l3s[i] = make_unique<LLCMoesiDirNoi>(cp, bus.get(), busmap.l3_ports[i], &busmap, "L3Cache" + to_string(i));
+        l3s[i] = make_unique<LLCMoesiDirNoi>(
+            cp, bus.get(), busmap.l3_ports[i], &busmap, "L3Cache" + to_string(i), get_global_cache_event_trace()
+        );
         simroot::add_sim_object(l3s[i].get(), "L3Cache" + to_string(i), 1);
     }
 
@@ -290,7 +295,9 @@ bool mp_moesi_l3(std::vector<string> &argv) {
     vector<unique_ptr<PrivL1L2MoesiL1DPort>> l1ds(param.cpu_num);
 
     for(uint32_t i = 0; i < param.cpu_num; i++) {
-        l2s[i] = make_unique<PrivL1L2Moesi>(cp, dcp, icp, bus.get(), busmap.l2_ports[i], &busmap, "L2Cache" + to_string(i));
+        l2s[i] = make_unique<PrivL1L2Moesi>(
+            cp, dcp, icp, bus.get(), busmap.l2_ports[i], &busmap, "L2Cache" + to_string(i), get_global_cache_event_trace()
+        );
         simroot::add_sim_object(l2s[i].get(), "L2Cache" + to_string(i), 1);
         l1is[i] = make_unique<PrivL1L2MoesiL1IPort>(l2s[i].get());
         l1ds[i] = make_unique<PrivL1L2MoesiL1DPort>(l2s[i].get());

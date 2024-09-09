@@ -13,8 +13,9 @@ LLCMoesiDirNoi::LLCMoesiDirNoi(
     BusInterfaceV2 *bus,
     BusPortT my_port_id,
     BusPortMapping *busmap,
-    string logname
-) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname),
+    string logname,
+    CacheEventTrace *trace
+) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace), 
 queue_index(1,1,0), queue_writeback(1,1,4), queue_index_result(1,1,0)
 {
     do_on_current_tick = 5;
@@ -84,6 +85,7 @@ void LLCMoesiDirNoi::p1_fetch() {
         topush->type = iter->type;
         topush->lindex = iter->line;
         topush->arg = iter->arg;
+        topush->transid = iter->transid;
         topush->index_cycle = this->index_cycle;
         if(iter->data.size() > 0) {
             assert(iter->data.size() == CACHE_LINE_LEN_BYTE);
@@ -133,6 +135,8 @@ void LLCMoesiDirNoi::p2_index() {
 
     BusPortT dst = 0;
 
+    uint32_t transid = pak->transid;
+
     if(pak->type == MSG_GETS) {
         CacheLineT *pline = nullptr;
         pak->blk_hit = block->get_line(lindex_to_nuca_tag(pak->lindex), &pline, true);
@@ -149,30 +153,36 @@ void LLCMoesiDirNoi::p2_index() {
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
             simroot_assert(busmap->get_subnode_port(pak->lindex, &dst));
-            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg);
+            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg, transid);
 
             pak->entry.dirty = true;
             pak->entry.exists.clear();
             pak->entry.exists.insert(l1_index);
             pak->entry.owner = l1_index;
             pak->delay_commit = true;
+
+            if(trace) trace->insert_event(transid, CacheEvent::L3_MISS);
         }
         else if(!(pak->dir_hit) && pak->blk_hit) {
             // LLC block hit, not in L1
-            pak->push_send_buf_with_line(src_port, CHANNEL_RESP, MSG_GETS_RESP, pak->lindex, 0, pline->data());
+            pak->push_send_buf_with_line(src_port, CHANNEL_RESP, MSG_GETS_RESP, pak->lindex, 0, pline->data(), transid);
 
             pak->entry.dirty = true;
             pak->entry.exists.clear();
             pak->entry.exists.insert(l1_index);
             pak->entry.owner = l1_index;
+
+            if(trace) trace->insert_event(transid, CacheEvent::L3_HIT);
         }
         else {
             simroot_assert(pak->entry.exists.find(pak->entry.owner) != pak->entry.exists.end());
             simroot_assert(busmap->get_reqnode_port(pak->entry.owner, &dst));
-            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg);
+            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETS_FORWARD, pak->lindex, pak->arg, transid);
 
             pak->entry.exists.insert(l1_index);
             pak->delay_commit = true;
+            
+            if(trace) trace->insert_event(transid, CacheEvent::L3_FORWARD);
         }
     }
     else if(pak->type == MSG_GETM) {
@@ -191,22 +201,26 @@ void LLCMoesiDirNoi::p2_index() {
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
             simroot_assert(busmap->get_subnode_port(pak->lindex, &dst));
-            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg);
+            pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg, transid);
 
             pak->entry.dirty = true;
             pak->entry.exists.clear();
             pak->entry.exists.insert(l1_index);
             pak->entry.owner = l1_index;
             pak->delay_commit = true;
+            
+            if(trace) trace->insert_event(transid, CacheEvent::L3_MISS);
         }
         else if(!(pak->dir_hit) && pak->blk_hit) {
             // LLC block hit, not in L1
-            pak->push_send_buf_with_line(src_port, CHANNEL_RESP, MSG_GETM_RESP, pak->lindex, 1, pline->data());
+            pak->push_send_buf_with_line(src_port, CHANNEL_RESP, MSG_GETM_RESP, pak->lindex, 1, pline->data(), transid);
 
             pak->entry.dirty = true;
             pak->entry.exists.clear();
             pak->entry.exists.insert(l1_index);
             pak->entry.owner = l1_index;
+            
+            if(trace) trace->insert_event(transid, CacheEvent::L3_HIT);
         }
         else {
             if(pak->blk_hit) {
@@ -217,7 +231,7 @@ void LLCMoesiDirNoi::p2_index() {
             if(std::find(pak->entry.exists.begin(), pak->entry.exists.end(), l1_index) == pak->entry.exists.end())
             {
                 simroot_assert(busmap->get_reqnode_port(pak->entry.owner, &dst));
-                pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg);
+                pak->push_send_buf(dst, CHANNEL_REQ, MSG_GETM_FORWARD, pak->lindex, pak->arg, transid);
                 skip_owner = true;
             }
             uint32_t invalid_cnt = 0;
@@ -226,16 +240,18 @@ void LLCMoesiDirNoi::p2_index() {
                     continue;
                 }
                 simroot_assert(busmap->get_reqnode_port(l1, &dst));
-                pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex, pak->arg);
+                pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex, pak->arg, transid);
                 invalid_cnt++;
             }
-            pak->push_send_buf(src_port, CHANNEL_RESP, MSG_GETM_ACK, pak->lindex, invalid_cnt);
+            pak->push_send_buf(src_port, CHANNEL_RESP, MSG_GETM_ACK, pak->lindex, invalid_cnt, transid);
 
             pak->entry.dirty = true;
             pak->entry.exists.clear();
             pak->entry.exists.insert(l1_index);
             pak->entry.owner = l1_index;
             pak->delay_commit = true;
+            
+            if(trace) trace->insert_event(transid, skip_owner?(CacheEvent::L3_FORWARD):(CacheEvent::L3_HIT));
         }
     }
     else if(pak->type == MSG_PUTS || pak->type == MSG_PUTE) {
@@ -258,7 +274,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->dir_evict = true;
         }
         
-        pak->push_send_buf(src_port, CHANNEL_ACK, MSG_PUT_ACK, pak->lindex, 0);
+        pak->push_send_buf(src_port, CHANNEL_ACK, MSG_PUT_ACK, pak->lindex, 0, 0);
     }
     else if(pak->type == MSG_PUTM || pak->type == MSG_PUTO) {
 
@@ -282,17 +298,17 @@ void LLCMoesiDirNoi::p2_index() {
                 if(rep_dir_hit && !(rep_ent->dirty)) {
                     for(auto l1 : rep_ent->exists) {
                         simroot_assert(busmap->get_reqnode_port(l1, &dst));
-                        pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex_replaced, my_port_id);
+                        pak->push_send_buf(dst, CHANNEL_RESP, MSG_INVALID, pak->lindex_replaced, my_port_id, 0);
                     }
                     directory->remove_line(lindex_to_nuca_tag(pak->lindex_replaced));
                 }
 
                 simroot_assert(busmap->get_subnode_port(pak->lindex_replaced, &dst));
-                pak->push_send_buf_with_line(dst, CHANNEL_REQ, MSG_PUTM, pak->lindex_replaced, my_port_id, replaced_line.data());
+                pak->push_send_buf_with_line(dst, CHANNEL_REQ, MSG_PUTM, pak->lindex_replaced, my_port_id, replaced_line.data(), 0);
             }
         }
 
-        pak->push_send_buf(pak->arg, CHANNEL_ACK, MSG_PUT_ACK, pak->lindex, 0);
+        pak->push_send_buf(pak->arg, CHANNEL_ACK, MSG_PUT_ACK, pak->lindex, 0, 0);
 
         pak->entry.dirty = (pak->entry.owner != l1_index);
         pak->entry.exists.erase(l1_index);

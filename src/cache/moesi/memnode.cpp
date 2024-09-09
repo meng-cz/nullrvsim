@@ -12,8 +12,9 @@ MemoryNode::MemoryNode(
     MemCtrlLineAddrMap *addr_map,
     BusInterfaceV2 *bus,
     BusPortT my_port,
-    uint32_t dwidth
-) : memblk(memblk), addr_map(addr_map), bus(bus), my_port(my_port), dwidth(dwidth) {
+    uint32_t dwidth,
+    CacheEventTrace *trace
+) : memblk(memblk), addr_map(addr_map), bus(bus), my_port(my_port), dwidth(dwidth), trace(trace) {
     do_on_current_tick = 2;
     do_apply_next_tick = 0;
 
@@ -42,6 +43,7 @@ void MemoryNode::on_current_tick() {
         simroot_assert(addr_map->is_responsible(msg.line));
         mb.hostoff = addr_map->get_local_mem_offset(msg.line);
         mb.src_port = msg.arg;
+        mb.transid = msg.transid;
         switch (msg.type)
         {
         case MSG_GETS_FORWARD :
@@ -57,6 +59,7 @@ void MemoryNode::on_current_tick() {
         default:
             simroot_assert(0);
         }
+        if(trace) trace->insert_event(msg.transid, CacheEvent::MEM_HANDLE);
     }
 
     if(membufs.empty()) {
@@ -92,6 +95,7 @@ void MemoryNode::on_current_tick() {
             send.line = iter->lindex;
             send.arg = 0;
             send.type = MSG_GET_RESP_MEM;
+            send.transid = iter->transid;
             send.data.assign(CACHE_LINE_LEN_BYTE, 0);
             cache_line_copy(send.data.data(), iter->linebuf);
             vector<uint8_t> buf;
