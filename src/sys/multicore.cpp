@@ -248,6 +248,7 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(1029, host_ioctl);
     MP_SYSCALL_CASE(1048, host_faccessat);
     MP_SYSCALL_CASE(1056, host_openat);
+    MP_SYSCALL_CASE(1059, host_pipe2);
     MP_SYSCALL_CASE(1063, host_read);
     MP_SYSCALL_CASE(1064, host_write);
     MP_SYSCALL_CASE(1078, host_readlinkat);
@@ -258,6 +259,7 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(1113, host_clock_gettime);
     MP_SYSCALL_CASE(1134, host_sigaction);
     MP_SYSCALL_CASE(1135, host_sigprocmask);
+    MP_SYSCALL_CASE(1199, host_socketpair);
     MP_SYSCALL_CASE(1220, host_clone);
     MP_SYSCALL_CASE(1261, host_prlimit);
     MP_SYSCALL_CASE(1278, host_getrandom);
@@ -558,9 +560,38 @@ MP_SYSCALL_DEFINE(222, mmap) {
             memset(buf, 0, length);
         }
 
-        DMARequest req(DMAReqType::host_memory_read, ret, buf, length, (uint64_t)thread);
-        fill_dma_iommu(&req, thread);
-        dma->push_dma_request(req);
+        list<DMARequestUnit> reqs;
+        VirtAddrT dma_dst = ret;
+        uint64_t cur = 0;
+        if(dma_dst & (PAGE_LEN_BYTE - 1)) {
+            uint32_t offset = (dma_dst & (PAGE_LEN_BYTE - 1));
+            cur = std::min<uint32_t>(PAGE_LEN_BYTE - offset, length);
+            PhysAddrT paddr = 0;
+            simroot_assert(thread->va2pa(dma_dst, &paddr, 0) == SimError::success);
+            reqs.emplace_back(DMARequestUnit{
+                .src = (PhysAddrT)buf,
+                .dst = paddr,
+                .size = (uint32_t)cur,
+                .flag = DMAFLG_SRC_HOST,
+                .callback = 0
+            });
+        }
+        while(cur < length) {
+            PhysAddrT paddr = 0;
+            simroot_assert(thread->va2pa(dma_dst + cur, &paddr, 0) == SimError::success);
+            uint32_t step = std::min<uint32_t>(PAGE_LEN_BYTE, length - cur);
+            reqs.emplace_back(DMARequestUnit{
+                .src = ((PhysAddrT)buf) + cur,
+                .dst = paddr,
+                .size = step,
+                .flag = DMAFLG_SRC_HOST,
+                .callback = 0
+            });
+            cur += step;
+        }
+
+        reqs.back().callback = (uint64_t)thread;
+        dma->push_dma_requests(reqs);
 
         DMAWaitThread waitthread;
         waitthread.thread = thread;
@@ -691,6 +722,17 @@ MP_SYSCALL_DEFINE(1056, host_openat) {
     uint64_t ret = openat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
     ret = CURT->fdtable_insert(ret);
     LOG_SYSCALL_4("host_openat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "0x%lx", IREG_V(a2), "%ld", IREG_V(a3), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1059, host_pipe2) {
+    int32_t fds[2];
+    uint64_t ret = pipe2(fds, IREG_V(a1));
+    int32_t *simfds = (int32_t*)HOST_ADDR_OF_IREG(a0);
+    simfds[0] = CURT->fdtable_insert(fds[0]);
+    simfds[1] = CURT->fdtable_insert(fds[1]);
+    LOG_SYSCALL_3("host_pipe2", "%ld", IREG_V(a1), "->%d", simfds[0], "->%d", simfds[1], "0x%lx", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
@@ -890,6 +932,17 @@ MP_SYSCALL_DEFINE(1135, host_sigprocmask) {
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
     thread->sys_sigprocmask(IREG_V(a0), (sigset_t *)HOST_ADDR_OF_IREG(a1), (sigset_t *)HOST_ADDR_OF_IREG(a2));
     LOG_SYSCALL_3("host_sigprocmask", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", 0UL);
+    IREG_V(a0) = 0;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1199, host_socketpair) {
+    int32_t fds[2];
+    uint64_t ret = socketpair(IREG_V(a0), IREG_V(a1), IREG_V(a2), fds);
+    int32_t *simfds = (int32_t*)HOST_ADDR_OF_IREG(a3);
+    simfds[0] = CURT->fdtable_insert(fds[0]);
+    simfds[1] = CURT->fdtable_insert(fds[1]);
+    LOG_SYSCALL_5("host_socketpair", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "->%d", simfds[0], "->%d", simfds[1], "%ld", 0UL);
     IREG_V(a0) = 0;
     return pc + 4;
 }

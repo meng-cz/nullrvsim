@@ -214,8 +214,9 @@ public:
     }
 };
 
-using simcache::DMARequest;
-using simcache::DMAReqType;
+using simcache::DMARequestUnit;
+using simcache::DMAFLG_DST_HOST;
+using simcache::DMAFLG_SRC_HOST;
 
 bool test_moesi_l1_dma() {
     uint64_t memsz = 1024UL * 1024UL * 16UL;
@@ -257,13 +258,13 @@ bool test_moesi_l1_dma() {
                 buf[i] = RAND(0,256);
             }
             cbids.insert(1);
-            DMARequest req(DMAReqType::host_memory_read, randstart, buf, sz, 1);
-            req.vp2pp = std::make_shared<std::unordered_map<VPageIndexT, PageIndexT>>();
-            req.pp2vp = std::make_shared<std::unordered_map<PageIndexT, VPageIndexT>>();
-            for(VPageIndexT vpi = (randstart >> PAGE_ADDR_OFFSET); vpi < CEIL_DIV(randend, PAGE_LEN_BYTE); vpi++) {
-                req.vp2pp->emplace(vpi, vpi);
-                req.pp2vp->emplace(vpi, vpi);
-            }
+            DMARequestUnit req{
+                .src = (PhysAddrT)buf,
+                .dst = randstart,
+                .size = (uint32_t)sz,
+                .flag = DMAFLG_SRC_HOST,
+                .callback = 1
+            };
             l1.push_dma_request(req);
 
             while(!cbids.empty()) {

@@ -33,7 +33,7 @@ public:
     virtual void set_handler(DMACallBackHandler *handler) {
         this->handler = handler;
     }
-    virtual void push_dma_requests(std::list<DMARequest> &req) {
+    virtual void push_dma_requests(std::list<DMARequestUnit> &req) {
         // printf("Add %ld DMA Reqs\n", req.size());
         push_lock.lock();
         arrival_reqs.splice(arrival_reqs.end(), req);
@@ -58,11 +58,26 @@ protected:
     DMACallBackHandler *handler = nullptr;
 
     SpinLock push_lock;
-    std::list<DMARequest> arrival_reqs;
-    std::list<DMARequest> dma_req_queue;
+    std::list<DMARequestUnit> arrival_reqs;
+    std::list<DMARequestUnit> dma_req_queue;
+
+    typedef struct {
+        LineAddrT   src = 0;
+        LineAddrT   dst = 0;
+        uint32_t    off = 0;
+        uint32_t    len = 0;
+    } DMAProcessingUnit;
+
+    class ProcessingDMAReq {
+    public:
+        ProcessingDMAReq(DMARequestUnit &req) : req(req) {};
+        
+        DMARequestUnit                  req;
+        std::list<DMAProcessingUnit*>   line_todo;
+        std::set<DMAProcessingUnit*>    line_wait_finish;
+    };
 
     ProcessingDMAReq *current = nullptr;
-    std::unordered_map<LineIndexT, ProcessingDMAReq*> wait_lines;
 
     typedef struct {
         vector<uint8_t>     msg;
@@ -99,6 +114,8 @@ protected:
 
     typedef struct {
         uint64_t line_buf[CACHE_LINE_LEN_I64];
+        uint64_t get_line_buf[CACHE_LINE_LEN_I64];
+        bool get_line_buf_valid = false;
         
         uint32_t state = 0;
 
@@ -107,7 +124,8 @@ protected:
         uint16_t need_invalid_ack = 0;
         uint16_t invalid_ack = 0;
 
-        uint64_t log_start_cycle = 0;
+        DMAProcessingUnit *unit = nullptr;
+        ProcessingDMAReq *req = nullptr;
     } MSHREntry;
 
     MSHRArray<MSHREntry> mshrs;

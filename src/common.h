@@ -121,6 +121,7 @@ inline void cache_line_copy(void* dst, void *src) {
 #define PGFLAG_PRIV     (1U<<3)
 #define PGFLAG_SHARE    (1U<<4)
 #define PGFLAG_ANON     (1U<<5)
+#define PGFLAG_COW      (1U<<6)
 
 #define PGFLAG_ELF      (1U<<16)
 #define PGFLAG_STACK    (1U<<17)

@@ -104,14 +104,14 @@ public:
         bool hit = true;
         shared_lock->read_lock();
         auto res = pgtable->pgtable.find(addr >> PAGE_ADDR_OFFSET);
-        if(res == pgtable->pgtable.end()) hit = false;
+        if(res == pgtable->pgtable.end()) [[unlikely]] hit = false;
         else {
             _ppi = res->second.ppi;
             _flg = res->second.flg;
         }
         shared_lock->read_unlock();
-        if(!hit) return SimError::invalidaddr;
-        if((_flg & flg) != flg) return SimError::unaccessable;
+        if(!hit) [[unlikely]] return SimError::invalidaddr;
+        if((_flg & flg) != flg) [[unlikely]] return ((_flg & PGFLAG_COW)?(SimError::pagefault):(SimError::unaccessable));
         *out = (_ppi << PAGE_ADDR_OFFSET) + (addr & (PAGE_LEN_BYTE - 1));
         return SimError::success;
     }

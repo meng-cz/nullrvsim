@@ -21,6 +21,7 @@ void init_simerror_name_table() {
     ADD_SIMERROR(processing);
     ADD_SIMERROR(busy);
     ADD_SIMERROR(coherence);
+    ADD_SIMERROR(pagefault);
     ADD_SIMERROR(unconditional);
     ADD_SIMERROR(slreorder);
     ADD_SIMERROR(llreorder);

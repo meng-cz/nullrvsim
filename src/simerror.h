@@ -17,6 +17,7 @@ enum class SimError {
     processing,         // 目标组件正在处理之前周期收到的相同的请求
     busy,               // 目标组件在本周期内无法处理更多请求
     coherence,          // 目标地址因处于一致性协议变化中而无法响应
+    pagefault,          // 目标地址触发了一次缺页中断
     unconditional,      // S.C.操作获取标志位失败
     slreorder,          // 该Load指令提前获取了错误的数据,需要重新执行
     llreorder,          // 该Load指令错误的提前到了另一个同地址Load之前,需要重新执行

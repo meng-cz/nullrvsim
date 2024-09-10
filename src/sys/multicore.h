@@ -17,8 +17,9 @@ using simcpu::CPUInterface;
 using simcpu::CPUSystemInterface;
 
 using simcache::DMACallBackHandler;
-using simcache::DMARequest;
-using simcache::DMAReqType;
+using simcache::DMARequestUnit;
+using simcache::DMAFLG_DST_HOST;
+using simcache::DMAFLG_SRC_HOST;
 using simcache::SimDMADevice;
 
 using isa::RVRegArray;
@@ -98,15 +99,6 @@ protected:
         std::list<std::pair<uint8_t*, uint64_t>>   to_unmap;
     } DMAWaitThread;
     std::unordered_map<RVThread *, DMAWaitThread> dma_wait_threads;
-    inline void fill_dma_iommu(DMARequest *req, RVThread *thread) {
-        for(VPageIndexT vpi = (req->vaddr >> PAGE_ADDR_OFFSET); vpi < CEIL_DIV(req->vaddr + req->size, PAGE_LEN_BYTE); vpi++) {
-            PhysAddrT paddr = 0;
-            assert(thread->va2pa(vpi << PAGE_ADDR_OFFSET, &paddr, 0) == SimError::success);
-            PageIndexT ppi = (paddr >> PAGE_ADDR_OFFSET);
-            req->vp2pp->emplace(vpi, ppi);
-            req->pp2vp->emplace(ppi, vpi);
-        }
-    }
 
 
     std::list<RVThread*> ready_threads;
@@ -170,6 +162,7 @@ protected:
     MP_SYSCALL_CLAIM(1029, host_ioctl);
     MP_SYSCALL_CLAIM(1048, host_faccessat);
     MP_SYSCALL_CLAIM(1056, host_openat);
+    MP_SYSCALL_CLAIM(1059, host_pipe2);
     MP_SYSCALL_CLAIM(1063, host_read);
     MP_SYSCALL_CLAIM(1064, host_write);
     MP_SYSCALL_CLAIM(1078, host_readlinkat);
@@ -180,6 +173,7 @@ protected:
     MP_SYSCALL_CLAIM(1113, host_clock_gettime);
     MP_SYSCALL_CLAIM(1134, host_sigaction);
     MP_SYSCALL_CLAIM(1135, host_sigprocmask);
+    MP_SYSCALL_CLAIM(1199, host_socketpair);
     MP_SYSCALL_CLAIM(1220, host_clone);
     MP_SYSCALL_CLAIM(1261, host_prlimit);
     MP_SYSCALL_CLAIM(1278, host_getrandom);
