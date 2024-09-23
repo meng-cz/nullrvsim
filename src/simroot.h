@@ -5,7 +5,7 @@
 
 #define simroot_assert(expr) {if(!(static_cast <bool> (expr))) [[unlikely]] { simroot::dump_core(); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
 
-#define simroot_assertf(expr, fmt, ...) {if(!(static_cast <bool> (expr))) [[unlikely]] { simroot::dump_core(); printf(fmt, ##__VA_ARGS__); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
+#define simroot_assertf(expr, fmt, ...) {if(!(static_cast <bool> (expr))) [[unlikely]] { simroot::dump_core(); printf(fmt "\n", ##__VA_ARGS__); fflush(stdout); __assert_fail (#expr, __FILE__, __LINE__, __ASSERT_FUNCTION);}}
 
 namespace simroot {
 
@@ -54,6 +54,7 @@ uint64_t get_wall_time_freq();
 
 uint64_t get_sim_time_us();
 
+uint64_t get_sim_tick_per_real_sec();
 
 }
 

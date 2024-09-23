@@ -9,6 +9,8 @@
 // For Reg-Cnt
 #include "cpu/isa.h"
 
+#include "cache/dmainterface.h"
+
 #include <signal.h>
 #include <sys/resource.h>
 
@@ -67,7 +69,7 @@ public:
     RVThread& operator=(const RVThread& t) = delete;
 
     RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *out_entry, VirtAddrT *out_sp);
-    RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag);
+    RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag, list<simcache::DMARequestUnit> *out_dma);
 
     VirtAddrT elf_load_dyn_lib(string elfpath, std::list<MemPagesToLoad> *output, VirtAddrT *out_entry);
     void elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs, VirtAddrT *out_entry, VirtAddrT *out_sp);
@@ -85,6 +87,7 @@ public:
     std::shared_ptr<std::unordered_map<int32_t, RVKernelSigaction>> sig_actions;
     std::shared_ptr<sigset_t> sig_proc_mask;
     std::shared_ptr<FDTable> fdtable;
+    PhysPageAllocator *pmman;
 
     int32_t fdtable_trans(int32_t user_fd);
     int32_t fdtable_insert(int32_t sys_fd);
@@ -126,6 +129,8 @@ public:
 
     uint64_t set_child_tid = 0UL;
     uint64_t clear_child_tid = 0UL;
+
+    bool do_child_cleartid = false;
 
     uint64_t robust_list_head = 0UL;
     uint64_t robust_list_len = 0UL;

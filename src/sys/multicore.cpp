@@ -6,6 +6,7 @@
 
 #include <stdarg.h>
 #include <fcntl.h>
+#include <poll.h>
 
 #include <sys/resource.h>
 #include <sys/mman.h>
@@ -21,7 +22,7 @@ using isa::ireg_value_of;
 
 void SimSystemMultiCore::init(SimWorkload &workload, std::vector<CPUInterface*> &cpus, PhysPageAllocator *ppman, SimDMADevice *dma) {
     cpu_num = cpus.size();
-    assert(cpu_num == conf::get_int("multicore", "cpu_number", cpu_num));
+    simroot_assert(cpu_num == conf::get_int("multicore", "cpu_number", cpu_num));
     for(int i = 0; i < cpu_num; i++) {
         cpu_devs.emplace_back(CPUDevice {
             .cpu = cpus[i],
@@ -62,6 +63,7 @@ void SimSystemMultiCore::init(SimWorkload &workload, std::vector<CPUInterface*> 
 
 bool SimSystemMultiCore::switch_next_thread_nolock(uint32_t cpuid, uint32_t flag) {
     bool ret = false;
+    uint64_t tid = cpu_devs[cpuid].exec_thread->tid;
     if(flag == SWFLAG_EXIT) {
         for(auto t : cpu_devs[cpuid].exec_thread->childs) {
             t->parent = nullptr;
@@ -86,6 +88,10 @@ bool SimSystemMultiCore::switch_next_thread_nolock(uint32_t cpuid, uint32_t flag
             simroot::print_log_info("No Running Thread, Simulator Exited");
             simroot::stop_sim_and_exit();
         }
+        else if(log_syscall) {
+            sprintf(log_buf, "SCHD: Exited thread %ld @CPU %d -> thread %ld", tid, cpuid, ret?(cpu_devs[cpuid].exec_thread->tid):0);
+            simroot::print_log_info(log_buf);
+        }
     }
     else if(flag == SWFLAG_WAIT) {
         waiting_threads.insert(cpu_devs[cpuid].exec_thread);
@@ -95,16 +101,24 @@ bool SimSystemMultiCore::switch_next_thread_nolock(uint32_t cpuid, uint32_t flag
             ready_threads.pop_front();
         }
         ret = (cpu_devs[cpuid].exec_thread != nullptr);
+        if(log_syscall) {
+            sprintf(log_buf, "SCHD: Waited thread %ld @CPU %d -> thread %ld", tid, cpuid, ret?(cpu_devs[cpuid].exec_thread->tid):0);
+            simroot::print_log_info(log_buf);
+        }
     }
     else if(flag == SWFLAG_YIELD) {
         ready_threads.push_back(cpu_devs[cpuid].exec_thread);
         cpu_devs[cpuid].exec_thread = ready_threads.front();
         ready_threads.pop_front();
+        if(log_syscall) {
+            sprintf(log_buf, "SCHD: Yield thread %ld @CPU %d -> thread %ld", tid, cpuid, cpu_devs[cpuid].exec_thread->tid);
+            simroot::print_log_info(log_buf);
+        }
         return true;
     }
     else {
         LOG(ERROR) << "Unsupported switch flag " << flag;
-        assert(0);
+        simroot_assert(0);
     }
     return ret;
 }
@@ -132,10 +146,14 @@ void SimSystemMultiCore::insert_ready_thread_nolock(RVThread *thread, uint32_t p
     else {
         ready_threads.push_back(thread);
     }
+    if(log_syscall) {
+        sprintf(log_buf, "SCHD: Ready thread %ld -> CPU %d", thread->tid, cpuid);
+        simroot::print_log_info(log_buf);
+    }
 }
 
 SimError SimSystemMultiCore::v_to_p(uint32_t cpu_id, VirtAddrT addr, PhysAddrT *out, PageFlagT flg) {
-    assert(cpu_devs[cpu_id].exec_thread);
+    simroot_assert(cpu_devs[cpu_id].exec_thread);
     return cpu_devs[cpu_id].exec_thread->va2pa(addr, out, flg);
 }
 
@@ -178,7 +196,7 @@ bool SimSystemMultiCore::dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, 
         case RV64AMOOP5::MIN : *pmem = std::min((int64_t)(*pmem), (int64_t)(*psrc)); break;
         case RV64AMOOP5::MAXU: *pmem = std::max((uint64_t)(*pmem), (uint64_t)(*psrc)); break;
         case RV64AMOOP5::MINU: *pmem = std::min((uint64_t)(*pmem), (uint64_t)(*psrc)); break;
-        default: assert(0);
+        default: simroot_assert(0);
         }
     }
     else if(len == 4) {
@@ -194,11 +212,11 @@ bool SimSystemMultiCore::dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, 
         case RV64AMOOP5::MIN : *pmem = std::min((int32_t)(*pmem), (int32_t)(*psrc)); break;
         case RV64AMOOP5::MAXU: *pmem = std::max((uint32_t)(*pmem), (uint32_t)(*psrc)); break;
         case RV64AMOOP5::MINU: *pmem = std::min((uint32_t)(*pmem), (uint32_t)(*psrc)); break;
-        default: assert(0);
+        default: simroot_assert(0);
         }
     }
     else {
-        assert(0);
+        simroot_assert(0);
     }
     return true;
 }
@@ -209,7 +227,7 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
         sprintf(log_buf, "CPU%d Raise an ECALL: %ld", cpu_id, syscallid);
         simroot::print_log_info(log_buf);
     }
-    assert(cpu_devs[cpu_id].exec_thread);
+    simroot_assert(cpu_devs[cpu_id].exec_thread);
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
     CPUInterface *cpu = cpu_devs[cpu_id].cpu;
 
@@ -245,12 +263,14 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(904, host_get_tid_address);
     MP_SYSCALL_CASE(910, host_ioctl_siocgifconf);
     MP_SYSCALL_CASE(1017, host_getcwd);
+    MP_SYSCALL_CASE(1025, host_fcntl);
     MP_SYSCALL_CASE(1029, host_ioctl);
     MP_SYSCALL_CASE(1048, host_faccessat);
     MP_SYSCALL_CASE(1056, host_openat);
     MP_SYSCALL_CASE(1059, host_pipe2);
     MP_SYSCALL_CASE(1063, host_read);
     MP_SYSCALL_CASE(1064, host_write);
+    MP_SYSCALL_CASE(1073, host_ppoll);
     MP_SYSCALL_CASE(1078, host_readlinkat);
     MP_SYSCALL_CASE(1079, host_newfstatat);
     MP_SYSCALL_CASE(1080, host_fstat);
@@ -260,6 +280,8 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(1134, host_sigaction);
     MP_SYSCALL_CASE(1135, host_sigprocmask);
     MP_SYSCALL_CASE(1199, host_socketpair);
+    MP_SYSCALL_CASE(1203, host_connect);
+    MP_SYSCALL_CASE(1208, host_setsockopt);
     MP_SYSCALL_CASE(1220, host_clone);
     MP_SYSCALL_CASE(1261, host_prlimit);
     MP_SYSCALL_CASE(1278, host_getrandom);
@@ -304,7 +326,7 @@ VirtAddrT SimSystemMultiCore::ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray
         sprintf(log_buf, "CPU%d Raise an EBREAK @0x%lx", cpu_id, addr);
         simroot::print_log_info(log_buf);
     }
-    assert(cpu_devs[cpu_id].exec_thread);
+    simroot_assert(cpu_devs[cpu_id].exec_thread);
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
     CPUInterface *cpu = cpu_devs[cpu_id].cpu;
     if(is_dev_mem(cpu_id, addr)) {
@@ -339,6 +361,21 @@ void SimSystemMultiCore::dma_complete_callback(uint64_t callbackid) {
         }
     }
     sch_lock.unlock();
+}
+
+void * SimSystemMultiCore::poll_wait_thread_function(void * _param) {
+    PollWaitThread *p = (PollWaitThread*)_param;
+
+    double simtime2realtime = ((double)(simroot::get_global_freq()) / (double)(simroot::get_sim_tick_per_real_sec()));
+    uint64_t ret = poll((struct pollfd *)(p->host_fds), p->nfds, (simtime2realtime * p->timeout_us) / 1000);
+    p->thread->context_switch[isa::ireg_index_of("a0")] = ret;
+
+    p->sys->sch_lock.lock();
+    p->sys->poll_wait_threads.erase(p->thread);
+    p->sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    p->sys->sch_lock.unlock();
+
+    return nullptr;
 }
 
 // -----------------------------------------------------------------
@@ -396,7 +433,7 @@ MP_SYSCALL_DEFINE(94, exitgroup) {
     simroot::stop_sim_and_exit();
     return 0UL;
     // if(switch_next_thread_lock(cpu_id, SWFLAG_EXIT)) {
-    //     assert(cpu_devs[cpu_id].exec_thread);
+    //     simroot_assert(cpu_devs[cpu_id].exec_thread);
     //     RVRegArray regs;
     //     VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
     //     cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
@@ -426,7 +463,7 @@ MP_SYSCALL_DEFINE(124, sched_yield) {
     IREG_V(a0) = 0;
     CURT->save_context_switch(pc + 4, iregs);
     sch_lock.lock();
-    assert(switch_next_thread_nolock(cpu_id, SWFLAG_YIELD));
+    simroot_assert(switch_next_thread_nolock(cpu_id, SWFLAG_YIELD));
     sch_lock.unlock();
     RVRegArray regs;
     VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
@@ -585,26 +622,25 @@ MP_SYSCALL_DEFINE(222, mmap) {
                 .dst = paddr,
                 .size = step,
                 .flag = DMAFLG_SRC_HOST,
-                .callback = 0
+                .callback = (uint64_t)thread
             });
             cur += step;
         }
 
-        reqs.back().callback = (uint64_t)thread;
-        dma->push_dma_requests(reqs);
-
         DMAWaitThread waitthread;
         waitthread.thread = thread;
         waitthread.last_cpu_id = cpu_id;
-        waitthread.ref_cnt = 1;
+        waitthread.ref_cnt = reqs.size();
         waitthread.to_free.emplace_back(buf);
+
+        dma->push_dma_requests(reqs);
 
         sch_lock.lock();
         dma_wait_threads.emplace(thread, waitthread);
         bool nextthread = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
         sch_lock.unlock();
         if(nextthread) {
-            assert(cpu_devs[cpu_id].exec_thread);
+            simroot_assert(cpu_devs[cpu_id].exec_thread);
             RVRegArray regs;
             VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
             cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
@@ -616,7 +652,7 @@ MP_SYSCALL_DEFINE(222, mmap) {
     else {
         CPUERROR("CPU%d Raise an mmap with unknown FLAGS: mmap(0x%lx, %ld, 0x%lx, 0x%lx, %d, %ld)",
             cpu_id, vaddr, length, prot, flags, fd, offset);
-        assert(0);
+        simroot_assert(0);
     }
 }
 
@@ -683,11 +719,27 @@ MP_SYSCALL_DEFINE(1017, host_getcwd) {
     return pc + 4;
 }
 
+MP_SYSCALL_DEFINE(1025, host_fcntl) {
+    int32_t hostfd = CURT->fdtable_trans(IREG_V(a0));
+    uint64_t op = IREG_V(a1);
+    int64_t ret = 0;
+    if(op == F_GETFD || op == F_SETFD) {
+        ret = fcntl(hostfd, op, IREG_V(a2));
+    }
+    else [[unlikely]] {
+        CPUERROR("Unknown fcntl op 0x%lx", op);
+        simroot_assert(0);
+    }
+    LOG_SYSCALL_3("host_fcntl", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
 MP_SYSCALL_DEFINE(1029, host_ioctl) {
     uint64_t cmd = IREG_V(a1);
-    if(cmd == 0) {
+    if(cmd == 0) [[unlikely]] {
         CPUERROR("Unknown ioctl cmd 0x%lx", IREG_V(a3));
-        assert(0);
+        simroot_assert(0);
     }
     int64_t ret = ioctl(CURT->fdtable_trans(IREG_V(a0)), cmd, HOST_ADDR_OF_IREG(a2));
     LOG_SYSCALL_4("host_ioctl", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
@@ -696,7 +748,7 @@ MP_SYSCALL_DEFINE(1029, host_ioctl) {
 } 
 
 MP_SYSCALL_DEFINE(910, host_ioctl_siocgifconf) {
-    assert(IREG_V(a1) == SIOCGIFCONF);
+    simroot_assert(IREG_V(a1) == SIOCGIFCONF);
     struct __tmp__ifconf {
         int     len;
         uint8_t *buf;
@@ -751,6 +803,51 @@ MP_SYSCALL_DEFINE(1064, host_write) {
     return pc + 4;
 }
 
+MP_SYSCALL_DEFINE(1073, host_ppoll) {
+    struct pollfd * hostfd = (struct pollfd *)HOST_ADDR_OF_IREG(a0);
+    uint64_t nfds = IREG_V(a1);
+    struct timespec * tmo = (struct timespec *)HOST_ADDR_OF_IREG(a2);
+    sigset_t * sigmask = (sigset_t *)HOST_ADDR_OF_IREG(a3);
+
+    if(sigmask) {
+        CPUERROR("Un-implemented: ppoll with sigmask");
+        assert(0);
+    }
+    
+    for(uint64_t i = 0; i < nfds; i++) {
+        hostfd[i].fd = CURT->fdtable_trans(hostfd[i].fd);
+    }
+
+    sch_lock.lock();
+    auto iter = poll_wait_threads.emplace(CURT, PollWaitThread()).first;
+    sch_lock.unlock();
+    PollWaitThread &wt = iter->second;
+    wt.thread = CURT;
+    wt.host_fds = (uint8_t*)hostfd;
+    wt.nfds = nfds;
+    wt.timeout_us = (tmo?(tmo->tv_nsec / 1000L + tmo->tv_sec * 1000000L):-1L);
+    wt.sys = this;
+    wt.cpuid = cpu_id;
+
+    LOG_SYSCALL_4("host_ppoll", "0x%lx", IREG_V(a0), "%ld", IREG_V(a1), "%ldus", wt.timeout_us, "0x%lx", IREG_V(a3), "%s", "xxx");
+
+    pthread_create(&wt.th, nullptr, poll_wait_thread_function, &wt);
+
+    CURT->save_context_switch(pc + 4, iregs);
+    sch_lock.lock();
+    bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(ret) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
+}
+
 MP_SYSCALL_DEFINE(1078, host_readlinkat) {
     uint64_t ret = readlinkat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), (char*)HOST_ADDR_OF_IREG(a2), IREG_V(a3));
     LOG_SYSCALL_4("host_readlinkat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "%s", (char*)HOST_ADDR_OF_IREG(a2), "%ld", IREG_V(a3), "%ld", ret);
@@ -779,7 +876,7 @@ MP_SYSCALL_DEFINE(1093, host_exit) {
     if(thread->clear_child_tid) {
         // Wake up all futex
         PhysAddrT paddr = 0;
-        assert(thread->va2pa(thread->clear_child_tid, &paddr, 0) == SimError::success);
+        simroot_assert(thread->va2pa(thread->clear_child_tid, &paddr, 0) == SimError::success);
         auto res = futex_wait_threads.find(paddr);
         if(res != futex_wait_threads.end()) {
             auto &tl = res->second;
@@ -792,7 +889,7 @@ MP_SYSCALL_DEFINE(1093, host_exit) {
     }
     if(switch_next_thread_nolock(cpu_id, SWFLAG_EXIT)) {
         sch_lock.unlock();
-        assert(cpu_devs[cpu_id].exec_thread);
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
         RVRegArray regs;
         VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
         cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
@@ -825,8 +922,8 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
 
     uint64_t *plock = (uint64_t*)(syscall_memory->get_host_addr(syscall_memory->get_futex_lock_vaddr()));
     PhysAddrT paddr = 0, paddr2 = 0;
-    assert(thread->va2pa(pargs->uaddr, &paddr, 0) == SimError::success);
-    if(pargs->uaddr2) assert(thread->va2pa(pargs->uaddr2, &paddr2, 0) == SimError::success);
+    simroot_assert(thread->va2pa(pargs->uaddr, &paddr, 0) == SimError::success);
+    if(pargs->uaddr2) simroot_assert(thread->va2pa(pargs->uaddr2, &paddr2, 0) == SimError::success);
 
     uint32_t futex_op = pargs->futex_op;
     uint32_t futex_flag = (futex_op >> 8);
@@ -844,7 +941,7 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
         bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
         sch_lock.unlock();
         if(ret) {
-            assert(cpu_devs[cpu_id].exec_thread);
+            simroot_assert(cpu_devs[cpu_id].exec_thread);
             RVRegArray regs;
             VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_switch(regs);
             cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
@@ -870,26 +967,26 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
     }
     else if(futex_op == FUTEX_REQUEUE) {
         LOG(ERROR) << "Unknown futex op " << futex_op;
-        assert(0);
+        simroot_assert(0);
     }
     else if(futex_op == FUTEX_CMP_REQUEUE) {
         LOG(ERROR) << "Unknown futex op " << futex_op;
-        assert(0);
+        simroot_assert(0);
     }
     else if(futex_op == FUTEX_WAKE_OP) {
         LOG(ERROR) << "Unknown futex op " << futex_op;
-        assert(0);
+        simroot_assert(0);
     }
     else if(futex_op == FUTEX_LOCK_PI) {
         LOG(ERROR) << "Unknown futex op " << futex_op;
-        assert(0);
+        simroot_assert(0);
     }
     else if(futex_op == FUTEX_UNLOCK_PI) {
         LOG(ERROR) << "Unknown futex op " << futex_op;
-        assert(0);
+        simroot_assert(0);
     }
     LOG(ERROR) << "Unknown futex op " << futex_op;
-    assert(0);
+    simroot_assert(0);
     return 0;
 }
 
@@ -911,7 +1008,7 @@ MP_SYSCALL_DEFINE(1113, host_clock_gettime) {
         break;
     default:
         LOG(ERROR) << "Unknown clock type: " << IREG_V(a0);
-        assert(0);
+        simroot_assert(0);
     }
     time->tv_sec = time_us / 1000000UL;
     time->tv_nsec = (time_us % 1000000UL) * 1000UL;
@@ -942,8 +1039,25 @@ MP_SYSCALL_DEFINE(1199, host_socketpair) {
     int32_t *simfds = (int32_t*)HOST_ADDR_OF_IREG(a3);
     simfds[0] = CURT->fdtable_insert(fds[0]);
     simfds[1] = CURT->fdtable_insert(fds[1]);
-    LOG_SYSCALL_5("host_socketpair", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "->%d", simfds[0], "->%d", simfds[1], "%ld", 0UL);
-    IREG_V(a0) = 0;
+    LOG_SYSCALL_5("host_socketpair", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "->%d", simfds[0], "->%d", simfds[1], "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1203, host_connect) {
+    uint64_t ret = connect(CURT->fdtable_trans(IREG_V(a0)), (struct sockaddr *)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    LOG_SYSCALL_3("host_connect", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1208, host_setsockopt) {
+    uint64_t optlen = IREG_V(a4);
+    uint64_t ret = setsockopt(
+        CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2), optlen?(HOST_ADDR_OF_IREG(a3)):((void*)IREG_V(a3)), optlen
+    );
+    LOG_SYSCALL_5("host_setsockopt", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", IREG_V(a4), "%ld", ret);
+    IREG_V(a0) = ret;
     return pc + 4;
 }
 
@@ -955,10 +1069,12 @@ MP_SYSCALL_DEFINE(1220, host_clone) {
     VirtAddrT child_tidptr = IREG_V(a4);
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
 
+    list<simcache::DMARequestUnit> dma_reqs;
+
     sch_lock.lock();
 
     VirtAddrT ret = alloc_tid();
-    RVThread *newthread = new RVThread(thread, ret, clone_flags);
+    RVThread *newthread = new RVThread(thread, ret, clone_flags, &dma_reqs);
     newthread->clear_child_tid = child_tidptr;
 
     RVRegArray newregs;
@@ -968,7 +1084,22 @@ MP_SYSCALL_DEFINE(1220, host_clone) {
     newregs[isa::ireg_index_of("a0")] = 0;
     newthread->save_context_switch(pc + 4, newregs);
 
-    insert_ready_thread_nolock(newthread, cpu_id);
+    if(dma_reqs.empty()) {
+        insert_ready_thread_nolock(newthread, cpu_id);
+    }
+    else {
+        DMAWaitThread waitthread;
+        waitthread.thread = thread;
+        waitthread.last_cpu_id = cpu_id;
+        waitthread.ref_cnt = dma_reqs.size();
+
+        for(auto &req : dma_reqs) {
+            req.callback = (uint64_t)thread;
+        }
+        dma->push_dma_requests(dma_reqs);
+
+        dma_wait_threads.emplace(thread, waitthread);
+    }
 
     sch_lock.unlock();
 

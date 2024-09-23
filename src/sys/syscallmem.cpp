@@ -150,6 +150,7 @@ uint64_t SyscallMemory::load_syscall_proxy_lib(string path) {
 
 VirtAddrT SyscallMemory::smem_alloc(uint64_t len) {
     uint64_t offset = 0;
+    len = ALIGN(len, 64);
     bool succ = false;
     alloc_lock.lock();
     auto iter = free_segs.begin();

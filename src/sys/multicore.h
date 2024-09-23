@@ -100,6 +100,17 @@ protected:
     } DMAWaitThread;
     std::unordered_map<RVThread *, DMAWaitThread> dma_wait_threads;
 
+    typedef struct {
+        RVThread *      thread = nullptr;
+        uint8_t *       host_fds = nullptr;
+        uint64_t        nfds = 0;
+        int64_t        timeout_us = 0;
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+    } PollWaitThread;
+    std::unordered_map<RVThread *, PollWaitThread> poll_wait_threads;
+    static void * poll_wait_thread_function(void * param);
 
     std::list<RVThread*> ready_threads;
     std::set<RVThread*> waiting_threads;
@@ -159,12 +170,14 @@ protected:
     MP_SYSCALL_CLAIM(904, host_get_tid_address);
     MP_SYSCALL_CLAIM(910, host_ioctl_siocgifconf);
     MP_SYSCALL_CLAIM(1017, host_getcwd);
+    MP_SYSCALL_CLAIM(1025, host_fcntl);
     MP_SYSCALL_CLAIM(1029, host_ioctl);
     MP_SYSCALL_CLAIM(1048, host_faccessat);
     MP_SYSCALL_CLAIM(1056, host_openat);
     MP_SYSCALL_CLAIM(1059, host_pipe2);
     MP_SYSCALL_CLAIM(1063, host_read);
     MP_SYSCALL_CLAIM(1064, host_write);
+    MP_SYSCALL_CLAIM(1073, host_ppoll);
     MP_SYSCALL_CLAIM(1078, host_readlinkat);
     MP_SYSCALL_CLAIM(1079, host_newfstatat);
     MP_SYSCALL_CLAIM(1080, host_fstat);
@@ -174,6 +187,8 @@ protected:
     MP_SYSCALL_CLAIM(1134, host_sigaction);
     MP_SYSCALL_CLAIM(1135, host_sigprocmask);
     MP_SYSCALL_CLAIM(1199, host_socketpair);
+    MP_SYSCALL_CLAIM(1203, host_connect);
+    MP_SYSCALL_CLAIM(1208, host_setsockopt);
     MP_SYSCALL_CLAIM(1220, host_clone);
     MP_SYSCALL_CLAIM(1261, host_prlimit);
     MP_SYSCALL_CLAIM(1278, host_getrandom);

@@ -13,7 +13,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
-RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *out_entry, VirtAddrT *out_sp) {
+RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *out_entry, VirtAddrT *out_sp): pmman(pmman) {
 
     this->pgtable = std::make_shared<ThreadPageTable>(pmman);
     this->sig_actions = std::make_shared<std::unordered_map<int32_t, RVKernelSigaction>>();
@@ -42,33 +42,139 @@ RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *ou
 }
 
 
-RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag) {
-    if(fork_flag == CLONEFLG_DEFAULT_THREAD) {
-        parent = parent_thread;
-        parent->childs.push_back(this);
+RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag, list<simcache::DMARequestUnit> *out_dma) {
+    // if(fork_flag == CLONEFLG_DEFAULT_THREAD) { // 0x3d0f00
+    //     parent = parent_thread;
+    //     parent->childs.push_back(this);
 
-        // shared_ptr
-        this->shared_lock = parent->shared_lock;
-        this->pgtable = parent->pgtable; 
-        this->sig_actions = parent->sig_actions; 
-        this->sig_proc_mask = parent->sig_proc_mask; 
-        this->fdtable = parent->fdtable; 
+    //     // shared_ptr
+    //     this->shared_lock = parent->shared_lock;
+    //     this->pgtable = parent->pgtable; 
+    //     this->sig_actions = parent->sig_actions; 
+    //     this->sig_proc_mask = parent->sig_proc_mask; 
+    //     this->fdtable = parent->fdtable; 
 
-        // context
-        this->tid = newtid;
-        this->pid = parent_thread->pid;
-        memcpy(this->context_host_ecall, parent->context_host_ecall, sizeof(this->context_host_ecall));
-        memcpy(this->context_switch, parent->context_switch, sizeof(this->context_switch));
+    //     // context
+    //     this->tid = newtid;
+    //     this->pid = parent_thread->pid;
+    //     memcpy(this->context_host_ecall, parent->context_host_ecall, sizeof(this->context_host_ecall));
+    //     memcpy(this->context_switch, parent->context_switch, sizeof(this->context_switch));
 
-        this->set_child_tid = parent->set_child_tid;
-        this->clear_child_tid = parent->clear_child_tid;
-        this->robust_list_head = parent->robust_list_head;
-        this->robust_list_len = parent->robust_list_len;
+    //     this->set_child_tid = parent->set_child_tid;
+    //     this->clear_child_tid = parent->clear_child_tid;
+    //     this->robust_list_head = parent->robust_list_head;
+    //     this->robust_list_len = parent->robust_list_len;
+    // }
+    // else {
+    //     LOG(ERROR) << "Unknown fork flag " << fork_flag;
+    //     assert(0);
+    // }
+    // 1200011
+
+    
+    this->tid = newtid;
+    this->pid = parent_thread->pid;
+    memcpy(this->context_host_ecall, parent_thread->context_host_ecall, sizeof(this->context_host_ecall));
+    memcpy(this->context_switch, parent_thread->context_switch, sizeof(this->context_switch));
+
+    this->pmman = parent_thread->pmman;
+
+    this->set_child_tid = parent_thread->set_child_tid;
+    this->clear_child_tid = parent_thread->clear_child_tid;
+    this->robust_list_head = parent_thread->robust_list_head;
+    this->robust_list_len = parent_thread->robust_list_len;
+
+    if(fork_flag & CLONE_PARENT) {
+        parent = parent_thread->parent;
+        if(parent) parent->childs.push_back(this);
     }
     else {
-        LOG(ERROR) << "Unknown fork flag " << fork_flag;
-        assert(0);
+        parent = parent_thread;
+        parent->childs.push_back(this);
     }
+
+    do_child_cleartid = (fork_flag & CLONE_CHILD_CLEARTID);
+
+    simroot_assertf(!(fork_flag & CLONE_IO), "Unimplemented Fork Flag: CLONE_IO");
+    simroot_assertf(!(fork_flag & CLONE_NEWCGROUP), "Unimplemented Fork Flag: CLONE_NEWCGROUP");
+    simroot_assertf(!(fork_flag & CLONE_NEWIPC), "Unimplemented Fork Flag: CLONE_NEWIPC");
+    simroot_assertf(!(fork_flag & CLONE_NEWNET), "Unimplemented Fork Flag: CLONE_NEWNET");
+    simroot_assertf(!(fork_flag & CLONE_NEWNS), "Unimplemented Fork Flag: CLONE_NEWNS");
+    simroot_assertf(!(fork_flag & CLONE_NEWPID), "Unimplemented Fork Flag: CLONE_NEWPID");
+    simroot_assertf(!(fork_flag & CLONE_NEWUSER), "Unimplemented Fork Flag: CLONE_NEWUSER");
+    simroot_assertf(!(fork_flag & CLONE_NEWUTS), "Unimplemented Fork Flag: CLONE_NEWUTS");
+    simroot_assertf(!(fork_flag & CLONE_PIDFD), "Unimplemented Fork Flag: CLONE_PIDFD");
+
+    // simroot_assertf((fork_flag & CLONE_FS), "Unimplemented Fork Flag: CLONE_FS");
+
+    if(fork_flag & CLONE_SIGHAND) {
+        this->sig_actions = parent_thread->sig_actions;
+        this->sig_proc_mask = parent_thread->sig_proc_mask;
+    }
+    else {
+        this->sig_actions = std::make_shared<std::unordered_map<int32_t, RVKernelSigaction>>();
+        this->sig_proc_mask = std::make_shared<sigset_t>();
+    }
+
+    if(fork_flag & CLONE_FILES) {
+        this->fdtable = parent_thread->fdtable; 
+    }
+    else {
+        this->fdtable = std::make_shared<FDTable>();
+        this->fdtable->tb.emplace(0, 0);
+        this->fdtable->tb.emplace(1, 1);
+        this->fdtable->tb.emplace(2, 2);
+        for(auto &entry : parent_thread->fdtable->tb) {
+            int32_t sim_fd = entry.first;
+            int32_t host_fd = entry.second;
+            if(sim_fd < 3) continue;
+            this->fdtable->tb.emplace(sim_fd, dup(host_fd));
+        }
+        this->fdtable->alloc_fd = parent_thread->fdtable->alloc_fd;
+    }
+
+    if(fork_flag & CLONE_VM) {
+        this->pgtable = parent_thread->pgtable; 
+    }
+    else {
+        this->pgtable = std::make_shared<ThreadPageTable>(pmman);
+        auto parent_pgtable = parent_thread->pgtable;
+
+        this->pgtable->brk_va = parent_pgtable->brk_va;
+        this->pgtable->dyn_lib_brk = parent_pgtable->dyn_lib_brk;
+        this->pgtable->mmap_segments = parent_pgtable->mmap_segments;
+        this->pgtable->pgtable = parent_pgtable->pgtable;
+
+        for(auto &entry : this->pgtable->pgtable) {
+            VPageIndexT vpi = entry.first;
+            PPageEntry &pg = entry.second;
+            PageIndexT ppi = pg.ppi;
+            if((pg.flg & PGFLAG_W) && !(pg.flg & PGFLAG_SHARE)) {
+                PageIndexT newppi = this->pgtable->ppman->alloc();
+                pg.ppi = newppi;
+                out_dma->emplace_back(simcache::DMARequestUnit{
+                    .src = (ppi << PAGE_ADDR_OFFSET),
+                    .dst = (newppi << PAGE_ADDR_OFFSET),
+                    .size = PAGE_LEN_BYTE,
+                    .flag = 0,
+                    .callback = 0
+                });
+            }
+            else {
+                this->pgtable->ppman->reuse(pg.ppi);
+            }
+        }
+
+    }
+
+    if((fork_flag & CLONE_SIGHAND) || (fork_flag & CLONE_FILES) || (fork_flag & CLONE_VM)) {
+        this->shared_lock = parent_thread->shared_lock;
+    }
+    else {
+        this->shared_lock = std::make_shared<SpinRWLock>();
+        this->shared_lock->wait_interval = 32;
+    }
+
 }
 
 

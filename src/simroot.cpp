@@ -91,6 +91,9 @@ public:
     uint64_t start_time_us = 0;
     uint64_t wall_time_freq = 0;
 
+    uint64_t last_1mtick_real_time_us = 0;
+    uint64_t last_1mtick_real_time_interval_us = 0;
+
     std::set<LogFile*> logfiles;
 };
 
@@ -166,7 +169,25 @@ void* simroot_thread_function(void *param) {
             entry.current--;
         }
         
-        if(index == 0) root->current_tick++;
+        if(index == 0) {
+            root->current_tick++;
+            if(root->current_tick % 1000000 == 0) [[unlikely]] {
+                uint64_t rt = get_current_time_us();
+                if(root->last_1mtick_real_time_us == 0) {
+                    root->last_1mtick_real_time_us = rt;
+                }
+                else {
+                    uint64_t interval = rt - root->last_1mtick_real_time_us;
+                    root->last_1mtick_real_time_us = rt;
+                    if(root->last_1mtick_real_time_interval_us == 0) {
+                        root->last_1mtick_real_time_interval_us = interval;
+                    }
+                    else {
+                        root->last_1mtick_real_time_interval_us = interval / 2 + root->last_1mtick_real_time_interval_us / 2;
+                    }
+                }
+            }
+        }
         if(root->tasks[index].do_clear_statistic) {
             for(auto &entry : root->tasks[index].simobjs) {
                 entry.p_obj->clear_statistic();
@@ -329,6 +350,15 @@ uint64_t get_sim_time_us() {
     return root->start_time_us + (tick / (root->global_freq / 1000000UL));
 }
 
+uint64_t get_sim_tick_per_real_sec() {
+    if(root->last_1mtick_real_time_interval_us) {
+        double tick_interval_us = (root->last_1mtick_real_time_interval_us) / 1000000.;
+        return (1000000. / tick_interval_us);
+    }
+    else {
+        return get_global_freq();
+    }
+}
 
 
 }
