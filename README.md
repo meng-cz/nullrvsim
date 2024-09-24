@@ -28,16 +28,15 @@ Cache与总线：
 软件接口：
 
 - 直接加载RV64 Linux elf文件，支持动态链接elf
-- 基于pthread的多线程，实现了简单的线程调度
+- 基于pthread的多线程或基于fork的多进程，实现了简单的线程调度
 - 支持部分常见系统调用 *（遇到一个实现一个）*
-- *Fork还没做，不支持多进程*
 
 
 ## 构建
 
 ### 依赖：
 
-- 我用的Linux内核版本：**5.15.\*** *（不同的内核版本可能导致主机系统调用接口不同，详细的版本支持信息还需测试）*
+- Linux内核版本：**>5.15.\*** *（不同的内核版本可能导致主机系统调用接口不同，详细的版本支持信息还需测试）*
 - 编译工具与内核头文件: **gcc, g++, cmake, linux-headers**
 - RV交叉编译工具：**riscv64-linux-gnu-gcc**，或cmake时指定环境变量**CROSS_COMPILE=riscv64-xxx-**
 
@@ -100,9 +99,9 @@ cpu_type = xiangshan
 
 [multicore]
 ; 模拟的CPU核心数量
-cpu_number = 1
+cpu_number = 4
 ; 模拟的内存大小
-mem_size_mb = 256
+mem_size_mb = 1024
 ```
 
 ### 运行单线程程序测试：
@@ -134,13 +133,22 @@ riscv64-linux-gnu-gcc ../example/helloworld.c -o helloworld.dyn.riscv
 ```ini
 [multicore]
 cpu_number = 4
-mem_size_mb = 256
+mem_size_mb = 1024
 ```
 
 ```bash
 # pwd : .../build
-./nullrvsim mp_moesi_l1l2 -w example/vecaddpt.riscv 4 2048 example/i2048-a.txt example/i2048-b.txt example/i2048-asumb.txt
+./nullrvsim mp_moesi_l1l2 -w example/pthread_test.riscv 4 1024
 ```
+
+### 运行基于fork的多进程程序测试：
+
+```bash
+# pwd : .../build
+./nullrvsim mp_moesi_l1l2 -w example/mptest.riscv 4 1024
+```
+
+
 
 ## 感谢
 

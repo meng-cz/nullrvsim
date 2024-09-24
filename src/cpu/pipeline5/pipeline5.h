@@ -2,6 +2,7 @@
 #define RVSIM_CPU_PIPELINE5_H
 
 #include "common.h"
+#include "simroot.h"
 
 #include "cpu/cpuinterface.h"
 #include "cpu/isa.h"
@@ -130,6 +131,7 @@ protected:
         RV64InstDecoded inst;
         RawDataT arg0;
         RawDataT arg1;
+        SimError err = SimError::success;
         bool passp3 = false;
         bool passp4 = false;
         uint64_t mem_start_tick = 0;
@@ -262,12 +264,12 @@ protected:
         if(res == SimError::invalidaddr) {
             sprintf(log_buf, "CPU%d Unknown Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
             LOG(ERROR) << log_buf;
-            exit(0);
+            simroot_assert(0);
         }
         else if(res == SimError::unaccessable) {
             sprintf(log_buf, "CPU%d Unauthorized Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
             LOG(ERROR) << log_buf;
-            exit(0);
+            simroot_assert(0);
         }
         return paddr;
     }
@@ -275,19 +277,19 @@ protected:
         if(res == SimError::invalidaddr) {
             sprintf(log_buf, "Invalid Memory Address @0x%lx: 0x%lx -> 0x%lx", pc, vaddr, paddr);
             LOG(ERROR) << string(log_buf);
-            exit(0);
+            simroot_assert(0);
         }
         else if(res == SimError::unaligned) {
             sprintf(log_buf, "Unaligned Memory Address @0x%lx: 0x%lx / %d", pc, vaddr, len);
             LOG(ERROR) << string(log_buf);
-            exit(0);
+            simroot_assert(0);
         }
     }
 
     inline void error_unkown_fp_format(RV64InstDecoded &inst) {
         sprintf(log_buf, "Unkown FP Format @0x%lx", inst.pc);
         LOG(ERROR) << string(log_buf);
-        exit(0);
+        simroot_assert(0);
     }
 
 // ---- Statistic ----

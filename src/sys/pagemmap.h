@@ -68,8 +68,9 @@ public:
     inline bool is_shared(PageIndexT ppindex) {
         lock.lock();
         auto res = alloced_pages.find(ppindex);
-        return (res != alloced_pages.end() && (res->second) > 1);
+        bool ret = (res != alloced_pages.end() && (res->second) > 1);
         lock.unlock();
+        return ret;
     }
 
     inline void debug_print_alloc_pages() {

@@ -38,6 +38,7 @@ public:
     virtual bool dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, RV64AMOOP5 amo, void *src, void *dst);
     virtual VirtAddrT syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs);
     virtual VirtAddrT ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs);
+    virtual VirtAddrT exception(uint32_t cpu_id, VirtAddrT pc, SimError expno, uint64_t arg1, uint64_t arg2, RVRegArray &regs);
 
     virtual void dma_complete_callback(uint64_t callbackid);
 
@@ -168,6 +169,7 @@ protected:
     MP_SYSCALL_CLAIM(901, host_alloc);
     MP_SYSCALL_CLAIM(902, host_free);
     MP_SYSCALL_CLAIM(904, host_get_tid_address);
+    MP_SYSCALL_CLAIM(905, host_free_cow_tmp_page);
     MP_SYSCALL_CLAIM(910, host_ioctl_siocgifconf);
     MP_SYSCALL_CLAIM(1017, host_getcwd);
     MP_SYSCALL_CLAIM(1025, host_fcntl);
@@ -192,6 +194,7 @@ protected:
     MP_SYSCALL_CLAIM(1220, host_clone);
     MP_SYSCALL_CLAIM(1261, host_prlimit);
     MP_SYSCALL_CLAIM(1278, host_getrandom);
+    MP_SYSCALL_CLAIM(1435, host_clone3);
 
 };
 

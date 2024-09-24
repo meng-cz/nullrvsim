@@ -30,8 +30,9 @@ public:
         assert(0);
     }
 
-    virtual VirtAddrT syscall(uint32_t cpu_id, VirtAddrT pc, RVRegArray &iregs) = 0;
-    virtual VirtAddrT ebreak(uint32_t cpu_id, VirtAddrT pc, RVRegArray &iregs) = 0;
+    virtual VirtAddrT syscall(uint32_t cpu_id, VirtAddrT pc, RVRegArray &regs) = 0;
+    virtual VirtAddrT ebreak(uint32_t cpu_id, VirtAddrT pc, RVRegArray &regs) = 0;
+    virtual VirtAddrT exception(uint32_t cpu_id, VirtAddrT pc, SimError expno, uint64_t arg1, uint64_t arg2, RVRegArray &regs) = 0;
 };
 
 }

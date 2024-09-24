@@ -467,8 +467,8 @@ void proxy_113_clockgettime(uint64_t clockid, struct timespec *tp) {
     _ecall_ret(ret);
 }
 
-#define SIZEOF_SIGSET_T (128UL)
-#define SIZEOF_KERNEL_SIGACTION (144UL)
+#define SIZEOF_SIGSET_T (8UL)
+#define SIZEOF_KERNEL_SIGACTION (16UL + SIZEOF_SIGSET_T)
 
 /**
  * Syscall 134 sigaction - examine and change a signal action
@@ -498,19 +498,21 @@ void proxy_134_sigaction(int64_t signum, uint8_t *act, uint8_t *oldact) {
 /**
  * Syscall 135 sigprocmask - examine and change blocked signals
  * int sigprocmask(int how, const sigset_t *_Nullable restrict set, sigset_t *_Nullable restrict oldset);
+ * int syscall(SYS_rt_sigprocmask, int how, const kernel_sigset_t *_Nullable set, kernel_sigset_t *_Nullable oldset, size_t sigsetsize);
+
 */
-void proxy_135_sigprocmask(int64_t how, uint8_t *set, uint8_t *oldset) {
+void proxy_135_sigprocmask(int64_t how, uint8_t *set, uint8_t *oldset, uint64_t sigsetsize) {
     uint64_t ret = 0;
-    uint8_t *hset = _host_malloc(SIZEOF_SIGSET_T);
+    uint8_t *hset = _host_malloc(sigsetsize);
     if(set) {
-        _rv64memcpy(hset, set, SIZEOF_SIGSET_T);
-        ret = _host_syscall_3(how, (uint64_t)hset, (oldset)?((uint64_t)hset):0, 1135);
+        _rv64memcpy(hset, set, sigsetsize);
+        ret = _host_syscall_4(how, (uint64_t)hset, (oldset)?((uint64_t)hset):0, sigsetsize, 1135);
     }
     else {
-        ret = _host_syscall_3(how, 0, (uint64_t)hset, 1135);
+        ret = _host_syscall_4(how, 0, (uint64_t)hset, sigsetsize, 1135);
     }
     if(oldset) {
-        _rv64memcpy(oldset, hset, SIZEOF_SIGSET_T);
+        _rv64memcpy(oldset, hset, sigsetsize);
     }
     _host_free(hset);
     _ecall_ret(ret);
@@ -632,4 +634,13 @@ void proxy_278_getrandom(uint8_t *buf, uint64_t buflen, uint32_t flags) {
     _ecall_ret(ret);
 }
 
+
+/**
+ * Sim-side page fault handler
+ */
+// void proxy_501_pagefault(uint8_t *dst, uint8_t *src, uint64_t sz) {
+//     _rv64memcpy(dst, src, sz);
+//     uint64_t ret = _host_syscall_1((uint64_t)src, 905); 
+//     _ecall_ret(ret);
+// }
 

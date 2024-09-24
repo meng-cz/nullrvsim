@@ -90,7 +90,7 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
                 else
                     sprintf(log_buf, "CPU%d ICache Access Unknown V-Address 0x%lx", cpu_id, pc);
                 LOG(ERROR) << log_buf;
-                exit(0);
+                simroot_assert(0);
             }
         }
     }
@@ -168,7 +168,7 @@ void PipeLine5CPU::process_pipeline_2_decode() {
     if(!isa::decode_rv64(raw.inst_raw, &(dec))) {
         sprintf(log_buf, "UNKOWN INST @0x%lx : 0x%x", raw.pc, raw.inst_raw);
         LOG(ERROR) << string(log_buf);
-        exit(0);
+        simroot_assert(0);
     }
     if(dec.is_unique()) {
         if(p3_workload.first || p4_workload.first || p5_workload.first) {
@@ -200,6 +200,8 @@ void PipeLine5CPU::process_pipeline_2_decode() {
         dec.opcode == RV64OPCode::load ||
         dec.opcode == RV64OPCode::amo
     );
+
+    p5dec.err = SimError::success;
 
     p5dec.mem_start_tick = p5dec.mem_finish_tick = 0;
     p5dec.cache_missed = false;
@@ -469,8 +471,16 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
         }
         else {
-            PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_R, inst.pc);
-            SimError res = io_dcache_port->load(paddr, len, &buf, false);
+            PhysAddrT paddr = 0;
+            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R);
+            if(res != SimError::success) {
+                p5inst.err = res;
+                p4_result.second = p4_workload.second;
+                p4_result.first = true;
+                return;
+            }
+            // PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_R, inst.pc);
+            res = io_dcache_port->load(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
                 p5inst.cache_missed = true;
@@ -506,8 +516,15 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
         }
         else {
-            PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_W, inst.pc);
-            SimError res = io_dcache_port->store(paddr, len, &buf, false);
+            PhysAddrT paddr = 0;
+            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_W);
+            if(res != SimError::success) {
+                p5inst.err = res;
+                p4_result.second = p4_workload.second;
+                p4_result.first = true;
+                return;
+            }
+            res = io_dcache_port->store(paddr, len, &buf, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
                 p5inst.cache_missed = true;
@@ -543,6 +560,42 @@ void PipeLine5CPU::process_pipeline_5_commit() {
     if(log_info) {
         sprintf(log_buf, "CPU%d P5: %s", cpu_id, inst.debug_name_str.c_str());
         simroot::print_log_info(log_buf);
+    }
+
+    if(p5inst.err != SimError::success) {
+        if(p5inst.err == SimError::invalidaddr) {
+            sprintf(log_buf, "CPU%d Unknown Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, inst.pc, p5inst.arg0);
+            LOG(ERROR) << log_buf;
+            simroot_assert(0);
+        }
+        else if(p5inst.err == SimError::unaccessable) {
+            sprintf(log_buf, "CPU%d Unauthorized Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, inst.pc, p5inst.arg0);
+            LOG(ERROR) << log_buf;
+            simroot_assert(0);
+        }
+        else if(p5inst.err == SimError::pagefault) {
+            RVRegArray regs;
+            for(int i = 0; i < RV_REG_CNT_INT; i++) {
+                regs[i] = iregs.getu(i);
+            }
+            for(int i = 0; i < RV_REG_CNT_FP; i++) {
+                regs[RV_REG_CNT_INT + i] = fregs.getb(i);
+            }
+            pc_redirect = io_sys_port->exception(cpu_id, inst.pc, SimError::pagefault, p5inst.arg0, 0, regs);
+            apply_pc_redirect = true;
+            for(int i = 0; i < RV_REG_CNT_INT; i++) {
+                iregs.setu(i, regs[i]);
+            }
+            for(int i = 0; i < RV_REG_CNT_FP; i++) {
+                fregs.setb(i, regs[RV_REG_CNT_INT + i]);
+            }
+            return;
+        }
+        else {
+            sprintf(log_buf, "CPU%d Unknowm Error %d @0x%lx, arg: 0x%lx", cpu_id, (int32_t)(p5inst.err), inst.pc, p5inst.arg0);
+            LOG(ERROR) << log_buf;
+            simroot_assert(0);
+        }
     }
 
     if(inst.opcode == RV64OPCode::lui) {
@@ -637,7 +690,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
         #define ERR_CSR_OP \
                 sprintf(log_buf, "%lx: Unknown CSR op @0x%lx: %s\n", simroot::get_current_tick(), inst.pc, inst.debug_name_str.c_str()); \
                 LOG(ERROR) << log_buf; \
-                exit(0);
+                simroot_assert(0);
         
         if(csr_num == CSRNumber::fcsr) {
             switch (inst.param.csr.op)
@@ -714,7 +767,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
         else {
             sprintf(log_buf, "%lx: Unknown CSR index @0x%lx: %d\n", simroot::get_current_tick(), inst.pc, (int)(inst.param.csr.index));
             LOG(ERROR) << log_buf;
-            exit(0);
+            simroot_assert(0);
         }
     }
     // Todo
@@ -947,20 +1000,40 @@ void PipeLine5CPU::dump_core(std::ofstream &ofile) {
         p5_workload.first, p5_result.first
     );
     ofile << log_buf << "\n";
-    {
+    if(p3_workload.first) {
+        P5InstDecoded &p5inst = p3_workload.second;
+        RV64InstDecoded &inst = p3_workload.second.inst;
+        RVRegIndexT rd1 = inst.rd;
+        RVRegIndexT rs1 = inst.rs1;
+        RVRegIndexT rs2 = inst.rs2;
+        RVRegIndexT rs3 = inst.rs3;
+        isa::init_rv64_inst_name_str(&inst);
+        sprintf(log_buf, "CPU%d P3Work: @0x%lx, %s, rd-rs3: %d %d %d %d", cpu_id, inst.pc, inst.debug_name_str.c_str(), rd1, rs1, rs2, rs3);
+        ofile << log_buf << "\n";
+    }
+    if(p3_result.first) {
         P5InstDecoded &p5inst = p3_result.second;
         RV64InstDecoded &inst = p3_result.second.inst;
         RVRegIndexT rd1 = inst.rd;
         RVRegIndexT rs1 = inst.rs1;
         RVRegIndexT rs2 = inst.rs2;
         RVRegIndexT rs3 = inst.rs3;
-        sprintf(log_buf, "CPU%d P3: @0x%lx, %s, rd-rs3: %d %d %d %d", cpu_id, inst.pc, inst.debug_name_str.c_str(), rd1, rs1, rs2, rs3);
+        isa::init_rv64_inst_name_str(&inst);
+        sprintf(log_buf, "CPU%d P3Res: @0x%lx, %s, rd-rs3: %d %d %d %d", cpu_id, inst.pc, inst.debug_name_str.c_str(), rd1, rs1, rs2, rs3);
         ofile << log_buf << "\n";
     }
-    {
+    if(p4_workload.first) {
+        P5InstDecoded &p5inst = p4_workload.second;
+        RV64InstDecoded &inst = p4_workload.second.inst;
+        isa::init_rv64_inst_name_str(&inst);
+        sprintf(log_buf, "CPU%d P4Work: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
+        ofile << log_buf << "\n";
+    }
+    if(p4_result.first) {
         P5InstDecoded &p5inst = p4_result.second;
         RV64InstDecoded &inst = p4_result.second.inst;
-        sprintf(log_buf, "CPU%d P4: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
+        isa::init_rv64_inst_name_str(&inst);
+        sprintf(log_buf, "CPU%d P4Res: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
         ofile << log_buf << "\n";
     }
     string s = "\n";

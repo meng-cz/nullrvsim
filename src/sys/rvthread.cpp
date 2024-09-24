@@ -15,10 +15,13 @@
 
 RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *out_entry, VirtAddrT *out_sp): pmman(pmman) {
 
+    this->threadgroup = std::make_shared<std::list<RVThread*>>();
+    this->threadgroup->emplace_back(this);
+
     this->pgtable = std::make_shared<ThreadPageTable>(pmman);
     this->sig_actions = std::make_shared<std::unordered_map<int32_t, RVKernelSigaction>>();
-    this->sig_proc_mask = std::make_shared<sigset_t>();
-    memset(sig_proc_mask.get(), 0, sizeof(sigset_t));
+    this->sig_proc_mask = std::make_shared<RVSigset>();
+    this->sig_proc_mask->fill(0);
     this->shared_lock = std::make_shared<SpinRWLock>();
     this->shared_lock->wait_interval = 32;
     this->fdtable = std::make_shared<FDTable>();
@@ -26,6 +29,7 @@ RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *ou
     this->fdtable->tb.emplace(1, 1);
     this->fdtable->tb.emplace(2, 2);
     this->fdtable->alloc_fd = 3;
+    
     
     // Init attribution
     pid = tid = DEFAULT_PID;
@@ -42,7 +46,7 @@ RVThread::RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *ou
 }
 
 
-RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag, list<simcache::DMARequestUnit> *out_dma) {
+RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag) {
     // if(fork_flag == CLONEFLG_DEFAULT_THREAD) { // 0x3d0f00
     //     parent = parent_thread;
     //     parent->childs.push_back(this);
@@ -74,8 +78,10 @@ RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag,
     
     this->tid = newtid;
     this->pid = parent_thread->pid;
-    memcpy(this->context_host_ecall, parent_thread->context_host_ecall, sizeof(this->context_host_ecall));
-    memcpy(this->context_switch, parent_thread->context_switch, sizeof(this->context_switch));
+    // memcpy(this->context_host_ecall, parent_thread->context_host_ecall, sizeof(this->context_host_ecall));
+    // memcpy(this->context_switch, parent_thread->context_switch, sizeof(this->context_switch));
+    // this->ecall_with_ret = parent_thread->ecall_with_ret;
+    this->context_stack = parent_thread->context_stack;
 
     this->pmman = parent_thread->pmman;
 
@@ -92,6 +98,14 @@ RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag,
         parent = parent_thread;
         parent->childs.push_back(this);
     }
+    
+    if(fork_flag & CLONE_THREAD) {
+        this->threadgroup = parent_thread->threadgroup;
+    }
+    else {
+        this->threadgroup = std::make_shared<std::list<RVThread*>>();
+    }
+    this->threadgroup->emplace_back(this);
 
     do_child_cleartid = (fork_flag & CLONE_CHILD_CLEARTID);
 
@@ -113,7 +127,8 @@ RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag,
     }
     else {
         this->sig_actions = std::make_shared<std::unordered_map<int32_t, RVKernelSigaction>>();
-        this->sig_proc_mask = std::make_shared<sigset_t>();
+        this->sig_proc_mask = std::make_shared<RVSigset>();
+        this->sig_proc_mask->fill(0);
     }
 
     if(fork_flag & CLONE_FILES) {
@@ -137,33 +152,45 @@ RVThread::RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag,
         this->pgtable = parent_thread->pgtable; 
     }
     else {
-        this->pgtable = std::make_shared<ThreadPageTable>(pmman);
         auto parent_pgtable = parent_thread->pgtable;
+        this->pgtable = std::make_shared<ThreadPageTable>(parent_pgtable->ppman);
 
         this->pgtable->brk_va = parent_pgtable->brk_va;
         this->pgtable->dyn_lib_brk = parent_pgtable->dyn_lib_brk;
         this->pgtable->mmap_segments = parent_pgtable->mmap_segments;
-        this->pgtable->pgtable = parent_pgtable->pgtable;
 
-        for(auto &entry : this->pgtable->pgtable) {
+        // for(auto &entry : this->pgtable->pgtable) {
+        //     VPageIndexT vpi = entry.first;
+        //     PPageEntry &pg = entry.second;
+        //     PageIndexT ppi = pg.ppi;
+        //     if((pg.flg & PGFLAG_W) && !(pg.flg & PGFLAG_SHARE)) {
+        //         PageIndexT newppi = this->pgtable->ppman->alloc();
+        //         pg.ppi = newppi;
+        //         out_dma->emplace_back(simcache::DMARequestUnit{
+        //             .src = (ppi << PAGE_ADDR_OFFSET),
+        //             .dst = (newppi << PAGE_ADDR_OFFSET),
+        //             .size = PAGE_LEN_BYTE,
+        //             .flag = 0,
+        //             .callback = 0
+        //         });
+        //     }
+        //     else {
+        //         this->pgtable->ppman->reuse(pg.ppi);
+        //     }
+        // }
+
+        for(auto &entry : parent_pgtable->pgtable) {
             VPageIndexT vpi = entry.first;
             PPageEntry &pg = entry.second;
             PageIndexT ppi = pg.ppi;
-            if((pg.flg & PGFLAG_W) && !(pg.flg & PGFLAG_SHARE)) {
-                PageIndexT newppi = this->pgtable->ppman->alloc();
-                pg.ppi = newppi;
-                out_dma->emplace_back(simcache::DMARequestUnit{
-                    .src = (ppi << PAGE_ADDR_OFFSET),
-                    .dst = (newppi << PAGE_ADDR_OFFSET),
-                    .size = PAGE_LEN_BYTE,
-                    .flag = 0,
-                    .callback = 0
-                });
-            }
-            else {
-                this->pgtable->ppman->reuse(pg.ppi);
+            parent_pgtable->ppman->reuse(pg.ppi);
+            if((pg.flg & PGFLAG_W) && !(pg.flg & (PGFLAG_SHARE))) {
+                pg.flg &= (~PGFLAG_W);
+                pg.flg |= (PGFLAG_COW);
             }
         }
+
+        this->pgtable->pgtable = parent_pgtable->pgtable;
 
     }
 
@@ -618,29 +645,38 @@ void RVThread::sys_sigaction(int32_t signum, RVKernelSigaction *act, RVKernelSig
     shared_lock->write_unlock();
 }
 
-void RVThread::sys_sigprocmask(uint32_t how, sigset_t *set, sigset_t *oldset) {
+void RVThread::sys_sigprocmask(uint32_t how, uint8_t *set, uint8_t *oldset, uint64_t sigsetsize) {
+    simroot_assertf(sigsetsize == 8, "Don't preclude handling different sized sigset_t");
     shared_lock->write_lock();
+    RVSigset tmp;
+    uint8_t *sysset = sig_proc_mask->data();
+    uint8_t *tmpset = tmp.data();
+    
     if(oldset) {
-        memcpy(oldset, sig_proc_mask.get(), sizeof(sigset_t));
+        memcpy(tmpset, sysset, sigsetsize);
+        // memcpy(oldset, sig_proc_mask.get(), sizeof(sigset_t));
     }
     if(set) {
         if(how == SIG_BLOCK) {
-            for(int sn = 0; sn < 64; sn++) {
-                if(sigismember(set, sn) > 0) sigaddset(sig_proc_mask.get(), sn);
+            for(uint64_t i = 0; i < sigsetsize; i++) {
+                sysset[i] |= set[i];
             }
         }
         else if(how == SIG_UNBLOCK) {
-            for(int sn = 0; sn < 64; sn++) {
-                if(sigismember(set, sn) > 0) sigdelset(sig_proc_mask.get(), sn);
+            for(uint64_t i = 0; i < sigsetsize; i++) {
+                sysset[i] &= (~set[i]);
             }
         }
         else if(how == SIG_SETMASK) {
-            memcpy(sig_proc_mask.get(), set, sizeof(sigset_t));
+            memcpy(sysset, set, sigsetsize);
         }
         else {
             LOG(ERROR) << "Unsupported args for syscall sigprocmask";
             assert(0);
         }
+    }
+    if(oldset) {
+        memcpy(oldset, tmpset, sigsetsize);
     }
     shared_lock->write_unlock();
 }
@@ -659,33 +695,94 @@ void RVThread::sys_prlimit(uint64_t resource, rlimit* p_new, rlimit* p_old) {
     }
 }
 
-void RVThread::save_context_host_ecall(VirtAddrT nextpc, RVRegArray &iregs) {
-    context_host_ecall[0] = nextpc;
-    uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT, iregs.size());
-    for(uint64_t i = 1; i < cnt; i++) {
-        context_host_ecall[i] = iregs[i];
-    }
+VPageIndexT RVThread::cow_realloc_missed_page(VPageIndexT missed) {
+    shared_lock->write_lock();
+    auto res = pgtable->pgtable.find(missed);
+    simroot_assertf(res != pgtable->pgtable.end(), "Unknown Memory Access @0x%lx", missed << PAGE_ADDR_OFFSET);
+    PPageEntry &pg = res->second;
+    simroot_assertf(pg.flg & PGFLAG_COW, "Not a COW Page @0x%lx", missed << PAGE_ADDR_OFFSET);
+    
+    VPageIndexT tmp = (pgtable->dyn_lib_brk >> PAGE_ADDR_OFFSET) + 1;
+    while(pgtable->pgtable.find(tmp) != pgtable->pgtable.end()) tmp++;
+    simroot_assertf(tmp < (MAX_VADDR >> PAGE_ADDR_OFFSET), "Virt Memory Space Run out");
+
+    pgtable->pgtable.emplace(tmp, PPageEntry{
+        .ppi = pg.ppi,
+        .flg = PGFLAG_R,
+        .fd = 0,
+        .offset = 0
+    });
+    pg.ppi = pgtable->ppman->alloc();
+    pg.flg &= (~PGFLAG_COW);
+    pg.flg |= PGFLAG_W;
+    
+    shared_lock->write_unlock();
+
+    return tmp;
 }
 
-VirtAddrT RVThread::recover_context_host_ecall(RVRegArray &out_iregs) {
-    for(uint64_t i = 1; i < RV_REG_CNT_INT; i++) {
-        if(i == isa::ireg_index_of("a0")) continue;
-        out_iregs[i] =  context_host_ecall[i];
-    }
-    return context_host_ecall[0];
+void RVThread::cow_free_tmp_page(VPageIndexT tmppage) {
+    shared_lock->write_lock();
+    auto res = pgtable->pgtable.find(tmppage);
+    simroot_assert(res != pgtable->pgtable.end());
+    pgtable->ppman->free(res->second.ppi);
+    pgtable->pgtable.erase(res);
+    shared_lock->write_unlock();
 }
 
-void RVThread::save_context_switch(VirtAddrT nextpc, RVRegArray &regs) {
-    context_switch[0] = nextpc;
+// void RVThread::save_context_host_ecall(VirtAddrT nextpc, RVRegArray &iregs, bool request_ret) {
+//     ecall_with_ret = request_ret;
+//     context_host_ecall[0] = nextpc;
+//     uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT, iregs.size());
+//     for(uint64_t i = 1; i < cnt; i++) {
+//         context_host_ecall[i] = iregs[i];
+//     }
+// }
+
+// VirtAddrT RVThread::recover_context_host_ecall(RVRegArray &out_iregs) {
+//     for(uint64_t i = 1; i < RV_REG_CNT_INT; i++) {
+//         if(i == isa::ireg_index_of("a0") && ecall_with_ret) continue;
+//         out_iregs[i] =  context_host_ecall[i];
+//     }
+//     return context_host_ecall[0];
+// }
+
+// void RVThread::save_context_switch(VirtAddrT nextpc, RVRegArray &regs) {
+//     context_switch[0] = nextpc;
+//     uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT + RV_REG_CNT_FP, regs.size());
+//     memcpy(context_switch + 1, regs.data() + 1, (cnt - 1) * sizeof(uint64_t));
+// }
+
+// VirtAddrT RVThread::recover_context_switch(RVRegArray &out_regs) {
+//     isa::zero_regs(out_regs);
+//     uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT + RV_REG_CNT_FP, out_regs.size());
+//     memcpy(out_regs.data() + 1, context_switch + 1, (cnt - 1) * sizeof(uint64_t));
+//     return context_switch[0];
+// }
+
+void RVThread::save_context_stack(VirtAddrT nextpc, RVRegArray &regs, bool recover_a0) {
+    context_stack.emplace_back();
+    auto &c = context_stack.back();
+    c.recover_a0 = recover_a0;
     uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT + RV_REG_CNT_FP, regs.size());
-    memcpy(context_switch + 1, regs.data() + 1, (cnt - 1) * sizeof(uint64_t));
+    isa::zero_regs(c.regs);
+    memcpy(c.regs.data() + 1, regs.data() + 1, (cnt - 1) * sizeof(uint64_t));
+    c.regs[0] = nextpc;
 }
 
-VirtAddrT RVThread::recover_context_switch(RVRegArray &out_regs) {
-    isa::zero_regs(out_regs);
+VirtAddrT RVThread::recover_context_stack(RVRegArray &out_regs) {
+    auto &c = context_stack.back();
     uint64_t cnt = std::min<uint64_t>(RV_REG_CNT_INT + RV_REG_CNT_FP, out_regs.size());
-    memcpy(out_regs.data() + 1, context_switch + 1, (cnt - 1) * sizeof(uint64_t));
-    return context_switch[0];
+    if(c.recover_a0) {
+        memcpy(out_regs.data() + 1, c.regs.data() + 1, (cnt - 1) * sizeof(uint64_t));
+    }
+    else {
+        for(uint64_t i = 1; i < cnt; i++) {
+            if(i == isa::ireg_index_of("a0")) continue;
+            out_regs[i] =  c.regs[i];
+        }
+    }
+    VirtAddrT ret = c.regs[0];
+    context_stack.pop_back();
+    return ret;
 }
-
-

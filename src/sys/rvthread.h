@@ -56,10 +56,12 @@ typedef struct {
     std::vector<uint8_t>    data;
 } MemPagesToLoad;
 
+typedef std::array<uint8_t, 8> RVSigset;
+
 typedef struct {
     __sighandler_t k_sa_handler;
     unsigned long sa_flags;
-    sigset_t sa_mask;
+    RVSigset sa_mask;
 } RVKernelSigaction;
 
 class RVThread {
@@ -69,7 +71,7 @@ public:
     RVThread& operator=(const RVThread& t) = delete;
 
     RVThread(SimWorkload workload, PhysPageAllocator *pmman, VirtAddrT *out_entry, VirtAddrT *out_sp);
-    RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag, list<simcache::DMARequestUnit> *out_dma);
+    RVThread(RVThread *parent_thread, uint64_t newtid, uint64_t fork_flag);
 
     VirtAddrT elf_load_dyn_lib(string elfpath, std::list<MemPagesToLoad> *output, VirtAddrT *out_entry);
     void elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs, VirtAddrT *out_entry, VirtAddrT *out_sp);
@@ -81,11 +83,12 @@ public:
 
     std::list<RVThread*> childs;
     RVThread *parent = nullptr;
+    std::shared_ptr<std::list<RVThread*>> threadgroup;
 
     std::shared_ptr<SpinRWLock> shared_lock;
     std::shared_ptr<ThreadPageTable> pgtable;
     std::shared_ptr<std::unordered_map<int32_t, RVKernelSigaction>> sig_actions;
-    std::shared_ptr<sigset_t> sig_proc_mask;
+    std::shared_ptr<RVSigset> sig_proc_mask;
     std::shared_ptr<FDTable> fdtable;
     PhysPageAllocator *pmman;
 
@@ -99,7 +102,10 @@ public:
     void sys_munmap(VirtAddrT vaddr, uint64_t length);
     void sys_mprotect(VirtAddrT vaddr, uint64_t length, PageFlagT flag);
     void sys_sigaction(int32_t signum, RVKernelSigaction *act, RVKernelSigaction *oldact);
-    void sys_sigprocmask(uint32_t how, sigset_t *set, sigset_t *oldset);
+    void sys_sigprocmask(uint32_t how, uint8_t *set, uint8_t *oldset, uint64_t sigsetsize);
+
+    VPageIndexT cow_realloc_missed_page(VPageIndexT missed);
+    void cow_free_tmp_page(VPageIndexT tmppage);
 
     inline SimError va2pa(VirtAddrT addr, PhysAddrT *out, PageFlagT flg) {
         PageIndexT _ppi = 0;
@@ -114,18 +120,46 @@ public:
         }
         shared_lock->read_unlock();
         if(!hit) [[unlikely]] return SimError::invalidaddr;
-        if((_flg & flg) != flg) [[unlikely]] return ((_flg & PGFLAG_COW)?(SimError::pagefault):(SimError::unaccessable));
+        if((_flg & flg) != flg) [[unlikely]] {
+            if((_flg & PGFLAG_COW) && (flg & PGFLAG_W)) {
+                bool owned = false;
+                shared_lock->write_lock();
+                if(!pgtable->ppman->is_shared(_ppi)) {
+                    res = pgtable->pgtable.find(addr >> PAGE_ADDR_OFFSET);
+                    if(res != pgtable->pgtable.end()) [[likely]] {
+                        res->second.flg &= (~PGFLAG_COW);
+                        res->second.flg |= (PGFLAG_W);
+                        owned = true;
+                    }
+                }
+                shared_lock->write_unlock();
+                if(!owned) return SimError::pagefault;
+            }
+            else {
+                return SimError::unaccessable;
+            }
+        }
         *out = (_ppi << PAGE_ADDR_OFFSET) + (addr & (PAGE_LEN_BYTE - 1));
         return SimError::success;
     }
 
-    uint64_t context_host_ecall[RV_REG_CNT_INT];
-    uint64_t context_switch[RV_REG_CNT_INT + RV_REG_CNT_FP];
+    typedef struct {
+        RVRegArray  regs;
+        bool        recover_a0 = false;
+    } RVContext;
 
-    void save_context_host_ecall(VirtAddrT nextpc, RVRegArray &iregs);
-    VirtAddrT recover_context_host_ecall(RVRegArray &out_iregs);
-    void save_context_switch(VirtAddrT nextpc, RVRegArray &regs);
-    VirtAddrT recover_context_switch(RVRegArray &out_regs);
+    list<RVContext> context_stack;
+    void save_context_stack(VirtAddrT nextpc, RVRegArray &regs, bool recover_a0);
+    VirtAddrT recover_context_stack(RVRegArray &out_regs);
+
+    // bool ecall_with_ret = false;
+    // uint64_t context_host_ecall[RV_REG_CNT_INT];
+    // uint64_t context_switch[RV_REG_CNT_INT + RV_REG_CNT_FP];
+
+    // void save_context_host_ecall(VirtAddrT nextpc, RVRegArray &iregs, bool request_ret = true);
+    // VirtAddrT recover_context_host_ecall(RVRegArray &out_iregs);
+    // void save_context_switch(VirtAddrT nextpc, RVRegArray &regs);
+    // VirtAddrT recover_context_switch(RVRegArray &out_regs);
 
     uint64_t set_child_tid = 0UL;
     uint64_t clear_child_tid = 0UL;

@@ -199,6 +199,9 @@ void* simroot_thread_function(void *param) {
 
     }
 
+    std::string s2 = "Simulator Thread " + std::to_string(index) + " Exited";
+    print_log_info(s2);
+
     return nullptr;
 }
 
