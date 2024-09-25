@@ -136,16 +136,17 @@ protected:
     SyscallMemory *syscall_memory = nullptr;
     SpinLock syscall_memory_amo_lock; //同时只能有一个对系统内存的amo操作
 
-    char log_buf[256];
+    char log_buf[512];
     bool log_info = false;
     bool log_syscall = false;
 
-    std::vector<std::array<char, 256>> log_bufs;
+    std::vector<std::array<char, 512>> log_bufs;
 
 #define MP_SYSCALL_FUNC_NAME(num, name) syscall_##num##_##name
 #define MP_SYSCALL_CLAIM(num, name) VirtAddrT MP_SYSCALL_FUNC_NAME(num,name)(uint32_t cpu_id, VirtAddrT pc, RVRegArray &iregs)
 #define MP_SYSCALL_DEFINE(num, name) VirtAddrT SimSystemMultiCore::MP_SYSCALL_FUNC_NAME(num,name)(uint32_t cpu_id, VirtAddrT pc, RVRegArray &iregs)
 
+    MP_SYSCALL_CLAIM(24, dup3);
     MP_SYSCALL_CLAIM(57, close);
     MP_SYSCALL_CLAIM(62, lseek);
     MP_SYSCALL_CLAIM(94, exitgroup);

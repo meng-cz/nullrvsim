@@ -261,22 +261,23 @@ void PipeLine5CPU::process_pipeline_3_execute() {
     else if(inst.opcode == RV64OPCode::amo) {
         if(iregs.blocked(rs1)) return;
         if(inst.param.amo.op != RV64AMOOP5::LR && iregs.blocked(rs2)) return;
+        p5inst.vaddr = iregs.get(rs1);
         iregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::load || inst.opcode == RV64OPCode::loadfp) {
         if(iregs.blocked(rs1)) return;
-        p5inst.arg0 = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
+        p5inst.vaddr = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
         if(inst.opcode == RV64OPCode::load) iregs.block(rd1);
         else if(inst.opcode == RV64OPCode::loadfp) fregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::store) {
         if(iregs.blocked(rs1) || iregs.blocked(rs2)) return;
-        p5inst.arg0 = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
+        p5inst.vaddr = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
         p5inst.arg1 = iregs.getu(rs2);
     }
     else if(inst.opcode == RV64OPCode::storefp) {
         if(iregs.blocked(rs1) || fregs.blocked(rs2)) return;
-        p5inst.arg0 = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
+        p5inst.vaddr = iregs.getu(rs1) + RAW_DATA_AS(inst.imm).i64;
         p5inst.arg1 = fregs.at(rs2).value;
     }
     else if(inst.opcode == RV64OPCode::opimm) {
@@ -364,15 +365,22 @@ void PipeLine5CPU::process_pipeline_4_memory() {
     io_dcache_port->arrival_line(nullptr); // 用不到，清空cache的到达记录
 
     if(inst.opcode == RV64OPCode::amo && inst.param.amo.op == isa::RV64AMOOP5::SC) {
-        VirtAddrT vaddr = iregs.getu(inst.rs1);
+        VirtAddrT vaddr = p5inst.vaddr;
         uint64_t data = iregs.getu(inst.rs2);
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
             io_sys_port->dev_output(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &data);
         }
         else {
-            PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_R | PGFLAG_W, inst.pc);
+            PhysAddrT paddr = 0;
+            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            if(res != SimError::success) {
+                p5inst.err = res;
+                p4_result.second = p4_workload.second;
+                p4_result.first = true;
+                return;
+            }
             uint32_t len = isa::rv64_ls_width_to_length(inst.param.amo.wid);
-            SimError res = io_dcache_port->store_conditional(paddr, len, &data);
+            res = io_dcache_port->store_conditional(paddr, len, &data);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res == SimError::unconditional) {
                 p5inst.arg0 = 1;
@@ -388,15 +396,22 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
     }
     else if(inst.opcode == RV64OPCode::amo && inst.param.amo.op == isa::RV64AMOOP5::LR) {
-        VirtAddrT vaddr = iregs.getu(inst.rs1);
+        VirtAddrT vaddr = p5inst.vaddr;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
             io_sys_port->dev_input(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &(p5inst.arg0));
         }
         else {
-            PhysAddrT paddr = mem_trans_check_error(vaddr, PGFLAG_R | PGFLAG_W, inst.pc);
+            PhysAddrT paddr = 0;
+            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            if(res != SimError::success) {
+                p5inst.err = res;
+                p4_result.second = p4_workload.second;
+                p4_result.first = true;
+                return;
+            }
             uint32_t len = isa::rv64_ls_width_to_length(inst.param.amo.wid);
             int64_t data = 0;
-            SimError res = SimError::miss;
+            res = SimError::miss;
             if(inst.param.amo.wid == isa::RV64LSWidth::word) {
                 int32_t tmp = 0;
                 res = io_dcache_port->load_reserved(paddr, 4, &tmp);
@@ -416,7 +431,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
     }
     else if(inst.opcode == RV64OPCode::amo) {
-        VirtAddrT vaddr = iregs.getu(inst.rs1);
+        VirtAddrT vaddr = p5inst.vaddr;
         PhysAddrT paddr = 0;
         IntDataT previous;
         IntDataT value = iregs.get(inst.rs2);
@@ -425,8 +440,15 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             io_sys_port->dev_amo(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), inst.param.amo.op, &value, &previous);
         }
         else {
-            paddr = mem_trans_check_error(vaddr, PGFLAG_R | PGFLAG_W, inst.pc);
-            SimError res = io_dcache_port->store(paddr, 0, &value, false);
+            PhysAddrT paddr = 0;
+            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            if(res != SimError::success) {
+                p5inst.err = res;
+                p4_result.second = p4_workload.second;
+                p4_result.first = true;
+                return;
+            }
+            res = io_dcache_port->store(paddr, 0, &value, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 0);
             if(res != SimError::success) {
                 p5inst.cache_missed = true;
@@ -460,7 +482,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         p5inst.arg0 = previous;
     }
     else if(inst.opcode == RV64OPCode::load || inst.opcode == RV64OPCode::loadfp) {
-        VirtAddrT vaddr = p5inst.arg0;
+        VirtAddrT vaddr = p5inst.vaddr;
         uint32_t len = isa::rv64_ls_width_to_length(inst.param.loadstore);
         uint64_t buf = 0;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
@@ -505,7 +527,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
     }
     else if(inst.opcode == RV64OPCode::store || inst.opcode == RV64OPCode::storefp) {
-        VirtAddrT vaddr = p5inst.arg0;
+        VirtAddrT vaddr = p5inst.vaddr;
         uint32_t len = isa::rv64_ls_width_to_length(inst.param.loadstore);
         uint64_t buf = p5inst.arg1;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
@@ -581,7 +603,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
             for(int i = 0; i < RV_REG_CNT_FP; i++) {
                 regs[RV_REG_CNT_INT + i] = fregs.getb(i);
             }
-            pc_redirect = io_sys_port->exception(cpu_id, inst.pc, SimError::pagefault, p5inst.arg0, 0, regs);
+            pc_redirect = io_sys_port->exception(cpu_id, inst.pc, SimError::pagefault, p5inst.vaddr, 0, regs);
             apply_pc_redirect = true;
             for(int i = 0; i < RV_REG_CNT_INT; i++) {
                 iregs.setu(i, regs[i]);
@@ -592,7 +614,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
             return;
         }
         else {
-            sprintf(log_buf, "CPU%d Unknowm Error %d @0x%lx, arg: 0x%lx", cpu_id, (int32_t)(p5inst.err), inst.pc, p5inst.arg0);
+            sprintf(log_buf, "CPU%d Unknowm Error %d @0x%lx, arg: 0x%lx 0x%lx 0x%lx", cpu_id, (int32_t)(p5inst.err), inst.pc, p5inst.arg0, p5inst.arg1, p5inst.vaddr);
             LOG(ERROR) << log_buf;
             simroot_assert(0);
         }
@@ -772,7 +794,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
     }
     // Todo
     if(log_file_commited_inst) {
-        sprintf(log_buf, "%ld: Commit Inst @0x%lx: %s -> 0x%lx, 0x%lx\n", simroot::get_current_tick(), inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1);
+        sprintf(log_buf, "%ld: Commit Inst @0x%lx: %s -> 0x%lx, 0x%lx, 0x%lx\n", simroot::get_current_tick(), inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1, p5inst.vaddr);
         log_file_commited_inst->write(log_buf, strlen(log_buf));
         if(log_regs) {
             string s = (string("Register List @CPU") + std::to_string(cpu_id) + "\n");
@@ -1008,7 +1030,7 @@ void PipeLine5CPU::dump_core(std::ofstream &ofile) {
         RVRegIndexT rs2 = inst.rs2;
         RVRegIndexT rs3 = inst.rs3;
         isa::init_rv64_inst_name_str(&inst);
-        sprintf(log_buf, "CPU%d P3Work: @0x%lx, %s, rd-rs3: %d %d %d %d", cpu_id, inst.pc, inst.debug_name_str.c_str(), rd1, rs1, rs2, rs3);
+        sprintf(log_buf, "CPU%d P3Work: @0x%lx, %s, args: 0x%lx, 0x%lx, 0x%lx", cpu_id, inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1, p5inst.vaddr);
         ofile << log_buf << "\n";
     }
     if(p3_result.first) {
@@ -1019,21 +1041,21 @@ void PipeLine5CPU::dump_core(std::ofstream &ofile) {
         RVRegIndexT rs2 = inst.rs2;
         RVRegIndexT rs3 = inst.rs3;
         isa::init_rv64_inst_name_str(&inst);
-        sprintf(log_buf, "CPU%d P3Res: @0x%lx, %s, rd-rs3: %d %d %d %d", cpu_id, inst.pc, inst.debug_name_str.c_str(), rd1, rs1, rs2, rs3);
+        sprintf(log_buf, "CPU%d P3Res: @0x%lx, %s, args: 0x%lx, 0x%lx, 0x%lx", cpu_id, inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1, p5inst.vaddr);
         ofile << log_buf << "\n";
     }
     if(p4_workload.first) {
         P5InstDecoded &p5inst = p4_workload.second;
         RV64InstDecoded &inst = p4_workload.second.inst;
         isa::init_rv64_inst_name_str(&inst);
-        sprintf(log_buf, "CPU%d P4Work: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
+        sprintf(log_buf, "CPU%d P4Work: @0x%lx, %s, args: 0x%lx, 0x%lx, 0x%lx", cpu_id, inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1, p5inst.vaddr);
         ofile << log_buf << "\n";
     }
     if(p4_result.first) {
         P5InstDecoded &p5inst = p4_result.second;
         RV64InstDecoded &inst = p4_result.second.inst;
         isa::init_rv64_inst_name_str(&inst);
-        sprintf(log_buf, "CPU%d P4Res: @0x%lx, %s", cpu_id, inst.pc, inst.debug_name_str.c_str());
+        sprintf(log_buf, "CPU%d P4Res: @0x%lx, %s, args: 0x%lx, 0x%lx, 0x%lx", cpu_id, inst.pc, inst.debug_name_str.c_str(), p5inst.arg0, p5inst.arg1, p5inst.vaddr);
         ofile << log_buf << "\n";
     }
     string s = "\n";

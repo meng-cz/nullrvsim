@@ -95,6 +95,7 @@ public:
     int32_t fdtable_trans(int32_t user_fd);
     int32_t fdtable_insert(int32_t sys_fd);
     int32_t fdtable_pop(int32_t user_fd);
+    void fdtable_force_insert(int32_t user_fd, int32_t sys_fd);
 
     VirtAddrT sys_brk(VirtAddrT newbrk);
     VirtAddrT sys_mmap(uint64_t length, uint64_t pgflag, int32_t fd, uint64_t offset, string info);

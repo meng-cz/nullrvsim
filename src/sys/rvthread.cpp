@@ -577,6 +577,18 @@ int32_t RVThread::fdtable_pop(int32_t user_fd) {
     return ret;
 }
 
+void RVThread::fdtable_force_insert(int32_t user_fd, int32_t sys_fd) {
+    shared_lock->write_lock();
+    auto res = fdtable->tb.find(user_fd);
+    if(res != fdtable->tb.end()) {
+        res->second = sys_fd;
+    }
+    else {
+        fdtable->tb.emplace(user_fd, sys_fd);
+    }
+    shared_lock->write_unlock();
+}
+
 
 VirtAddrT RVThread::sys_brk(VirtAddrT newbrk) {
     shared_lock->write_lock();

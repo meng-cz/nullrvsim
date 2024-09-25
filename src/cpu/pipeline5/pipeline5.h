@@ -131,6 +131,7 @@ protected:
         RV64InstDecoded inst;
         RawDataT arg0;
         RawDataT arg1;
+        RawDataT vaddr;
         SimError err = SimError::success;
         bool passp3 = false;
         bool passp4 = false;
@@ -258,21 +259,21 @@ protected:
         
     }
 
-    inline PhysAddrT mem_trans_check_error(VirtAddrT vaddr, PageFlagT flg, VirtAddrT pc) {
-        PhysAddrT paddr = 0;
-        SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, flg);
-        if(res == SimError::invalidaddr) {
-            sprintf(log_buf, "CPU%d Unknown Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
-            LOG(ERROR) << log_buf;
-            simroot_assert(0);
-        }
-        else if(res == SimError::unaccessable) {
-            sprintf(log_buf, "CPU%d Unauthorized Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
-            LOG(ERROR) << log_buf;
-            simroot_assert(0);
-        }
-        return paddr;
-    }
+    // inline PhysAddrT mem_trans_check_error(VirtAddrT vaddr, PageFlagT flg, VirtAddrT pc) {
+    //     PhysAddrT paddr = 0;
+    //     SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, flg);
+    //     if(res == SimError::invalidaddr) {
+    //         sprintf(log_buf, "CPU%d Unknown Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
+    //         LOG(ERROR) << log_buf;
+    //         simroot_assert(0);
+    //     }
+    //     else if(res == SimError::unaccessable) {
+    //         sprintf(log_buf, "CPU%d Unauthorized Memory Access @0x%lx, V-Address: 0x%lx", cpu_id, pc, vaddr);
+    //         LOG(ERROR) << log_buf;
+    //         simroot_assert(0);
+    //     }
+    //     return paddr;
+    // }
     inline void cache_operation_result_check_error(SimError res, VirtAddrT pc, VirtAddrT vaddr, PhysAddrT paddr, uint32_t len) {
         if(res == SimError::invalidaddr) {
             sprintf(log_buf, "Invalid Memory Address @0x%lx: 0x%lx -> 0x%lx", pc, vaddr, paddr);

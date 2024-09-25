@@ -46,7 +46,7 @@ void SimSystemMultiCore::init(SimWorkload &workload, std::vector<CPUInterface*> 
     log_syscall = conf::get_int("sys", "log_ecall_to_stdout", 0);
     sch_lock.wait_interval = conf::get_int("sys", "sch_lock_wait_interval", 64);
     syscall_memory_amo_lock.wait_interval = 32;
-    log_bufs.assign(cpu_num, std::array<char, 256>());
+    log_bufs.assign(cpu_num, std::array<char, 512>());
 
     uint64_t entry = 0, sp = 0;
     RVThread *init_thread = new RVThread(workload, ppman, &entry, &sp);
@@ -245,6 +245,7 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
 
     switch (syscallid)
     {
+    MP_SYSCALL_CASE(24, dup3);
     MP_SYSCALL_CASE(57, close);
     MP_SYSCALL_CASE(62, lseek);
     MP_SYSCALL_CASE(94, exitgroup);
@@ -320,7 +321,9 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
                 regs[isa::ireg_index_of("a4")],
                 regs[isa::ireg_index_of("a5")]
             );
-            LOG(ERROR) << log_bufs[cpu_id].data();
+            simroot::print_log_info(string(log_bufs[cpu_id].data()));
+            printf("%s\n", log_bufs[cpu_id].data());
+            fflush(stdout);
             exit(0);
             return 0UL;
         }
@@ -450,9 +453,41 @@ sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ", " f2 "
 simroot::print_log_info(log_bufs[cpu_id].data());}
 
 
+MP_SYSCALL_DEFINE(24, dup3) {
+    int32_t sim_oldfd = IREG_V(a0);
+    int32_t sim_newfd = IREG_V(a1);
+    uint64_t flg = IREG_V(a2);
+    int32_t host_oldfd = CURT->fdtable_trans(sim_oldfd);
+    int32_t host_newfd = CURT->fdtable_trans(sim_newfd);
+    uint64_t ret = 0;
+
+    if(flg) {
+        CPUERROR("Unknown dup3 flag: 0x%lx", flg);
+        simroot_assert(0);
+    }
+
+    if(!host_oldfd) {
+        ret = EBADF;
+    }
+    else if(sim_newfd == sim_oldfd) {
+        ret = EINVAL;
+    }
+    else {
+        if(host_newfd > 2) {
+            close(host_newfd);
+        }
+        CURT->fdtable_force_insert(sim_newfd, dup(host_oldfd));
+        ret = 0;
+    }
+
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
 MP_SYSCALL_DEFINE(57, close) {
-    uint64_t ret = close(CURT->fdtable_pop(IREG_V(a0)));
-    LOG_SYSCALL_1("close", "%ld", IREG_V(a0), "%ld", ret);
+    int32_t host_fd = CURT->fdtable_pop(IREG_V(a0));
+    uint64_t ret = ((host_fd > 2)?close(host_fd):0);
+    LOG_SYSCALL_2("close", "%ld", IREG_V(a0), "%d", host_fd, "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
