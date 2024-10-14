@@ -7,12 +7,14 @@
 #include <stdarg.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <errno.h>
 
 #include <sys/resource.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 
 #include <net/if.h>
 
@@ -32,6 +34,10 @@ void SimSystemMultiCore::init(SimWorkload &workload, std::vector<CPUInterface*> 
     }
 
     this->dma = dma;
+
+    this->def_ldpaths = workload.ldpaths;
+    this->def_stacksz = workload.stack_size;
+    this->def_syscall_proxy_path = workload.syscall_proxy_lib_path;
 
     syscall_memory = new SyscallMemory(syscall_mem_vaddr_start, syscall_mem_length);
     if(syscall_memory->load_syscall_proxy_lib(workload.syscall_proxy_lib_path) == 0) {
@@ -229,8 +235,8 @@ bool SimSystemMultiCore::dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, 
     return true;
 }
 
-VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &regs) {
-    uint64_t syscallid = regs[17];
+VirtAddrT SimSystemMultiCore::ecall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &regs) {
+    uint64_t syscallid = regs[RV_REG_a7];
     if(log_info) {
         sprintf(log_buf, "CPU%d Raise an ECALL: %ld", cpu_id, syscallid);
         simroot::print_log_info(log_buf);
@@ -239,9 +245,10 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
     CPUInterface *cpu = cpu_devs[cpu_id].cpu;
 
-    VirtAddrT ret = 0UL;
+    VirtAddrT retpc = 0UL;
 
-#define MP_SYSCALL_CASE(num, name) case num: ret = MP_SYSCALL_FUNC_NAME(num, name)(cpu_id, addr, regs); break;
+#define MP_SYSCALL_CASE(num, name) case num: retpc = MP_SYSCALL_FUNC_NAME(num, name)(cpu_id, addr, regs); break;
+#define MP_EMPTY_CASE(num, name) case num: retpc = pc + 4; break;
 
     switch (syscallid)
     {
@@ -251,7 +258,10 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(94, exitgroup);
     MP_SYSCALL_CASE(96, set_tid_address);
     MP_SYSCALL_CASE(99, set_robust_list);
+    MP_SYSCALL_CASE(122, sched_setaffinity);
+    MP_SYSCALL_CASE(123, sched_getaffinity);
     MP_SYSCALL_CASE(124, sched_yield);
+    MP_SYSCALL_CASE(131, tgkill);
     MP_SYSCALL_CASE(172, getpid);
     MP_SYSCALL_CASE(173, getppid);
     MP_SYSCALL_CASE(174, getuid);
@@ -260,6 +270,7 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(177, getegid);
     MP_SYSCALL_CASE(178, gettid);
     MP_SYSCALL_CASE(198, socket);
+    MP_SYSCALL_CASE(201, listen);
     MP_SYSCALL_CASE(214, brk);
     MP_SYSCALL_CASE(215, munmap);
     MP_SYSCALL_CASE(222, mmap);
@@ -278,8 +289,10 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(1048, host_faccessat);
     MP_SYSCALL_CASE(1056, host_openat);
     MP_SYSCALL_CASE(1059, host_pipe2);
+    MP_SYSCALL_CASE(1061, host_getdents);
     MP_SYSCALL_CASE(1063, host_read);
     MP_SYSCALL_CASE(1064, host_write);
+    MP_SYSCALL_CASE(1072, host_pselect6);
     MP_SYSCALL_CASE(1073, host_ppoll);
     MP_SYSCALL_CASE(1078, host_readlinkat);
     MP_SYSCALL_CASE(1079, host_newfstatat);
@@ -287,25 +300,33 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
     MP_SYSCALL_CASE(1093, host_exit);
     MP_SYSCALL_CASE(1098, host_futex);
     MP_SYSCALL_CASE(1113, host_clock_gettime);
+    MP_SYSCALL_CASE(1115, host_clock_nanosleep);
     MP_SYSCALL_CASE(1134, host_sigaction);
     MP_SYSCALL_CASE(1135, host_sigprocmask);
     MP_SYSCALL_CASE(1199, host_socketpair);
+    MP_SYSCALL_CASE(1200, host_bind);
     MP_SYSCALL_CASE(1203, host_connect);
+    MP_SYSCALL_CASE(1204, host_getsockname);
+    MP_SYSCALL_CASE(1206, host_sendto);
     MP_SYSCALL_CASE(1208, host_setsockopt);
+    MP_SYSCALL_CASE(1209, host_getsockopt);
+    MP_SYSCALL_CASE(1212, host_recvmsg);
     MP_SYSCALL_CASE(1220, host_clone);
+    MP_SYSCALL_CASE(1221, host_execve);
     MP_SYSCALL_CASE(1261, host_prlimit);
     MP_SYSCALL_CASE(1278, host_getrandom);
     MP_SYSCALL_CASE(1435, host_clone3);
+    MP_SYSCALL_CASE(1439, host_faccessat2);
     default:
-        ret = syscall_memory->get_syscall_proxy_entry(syscallid);
-        if(ret != 0 && syscallid < 500) {
+        retpc = syscall_memory->get_syscall_proxy_entry(syscallid);
+        if(retpc != 0 && syscallid < 500) {
             // if(log_syscall) {
             //     sprintf(log_bufs[cpu_id].data(), "CPU%d ECALL->Host_Proxy_%ld(0x%lx, 0x%lx, 0x%lx, 0x%lx)",
             //     cpu_id, syscallid,
-            //     regs[isa::ireg_index_of("a0")],
-            //     regs[isa::ireg_index_of("a1")],
-            //     regs[isa::ireg_index_of("a2")],
-            //     regs[isa::ireg_index_of("a3")]
+            //     regs[RV_REG_a0],
+            //     regs[RV_REG_a1],
+            //     regs[RV_REG_a2],
+            //     regs[RV_REG_a3]
             //     );
             //     simroot::print_log_info(log_bufs[cpu_id].data());
             // }
@@ -314,12 +335,12 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
         else {
             sprintf(log_bufs[cpu_id].data(), "CPU%d Raise an Unkonwn ECALL %ld @0x%lx, arg:0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx",
                 cpu_id, syscallid, addr,
-                regs[isa::ireg_index_of("a0")],
-                regs[isa::ireg_index_of("a1")],
-                regs[isa::ireg_index_of("a2")],
-                regs[isa::ireg_index_of("a3")],
-                regs[isa::ireg_index_of("a4")],
-                regs[isa::ireg_index_of("a5")]
+                regs[RV_REG_a0],
+                regs[RV_REG_a1],
+                regs[RV_REG_a2],
+                regs[RV_REG_a3],
+                regs[RV_REG_a4],
+                regs[RV_REG_a5]
             );
             simroot::print_log_info(string(log_bufs[cpu_id].data()));
             printf("%s\n", log_bufs[cpu_id].data());
@@ -329,9 +350,10 @@ VirtAddrT SimSystemMultiCore::syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArra
         }
     }
 
+#undef MP_EMPTY_CASE
 #undef MP_SYSCALL_CASE
 
-    return ret;
+    return retpc;
 }
 
 VirtAddrT SimSystemMultiCore::ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs) {
@@ -363,9 +385,9 @@ VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError 
         VPageIndexT missed = (arg1 >> PAGE_ADDR_OFFSET);
         VPageIndexT tmppage = curt->cow_realloc_missed_page(missed);
 
-        iregs[isa::ireg_index_of("a0")] = (missed << PAGE_ADDR_OFFSET);
-        iregs[isa::ireg_index_of("a1")] = (tmppage << PAGE_ADDR_OFFSET);
-        iregs[isa::ireg_index_of("a2")] = PAGE_LEN_BYTE;
+        iregs[RV_REG_a0] = (missed << PAGE_ADDR_OFFSET);
+        iregs[RV_REG_a1] = (tmppage << PAGE_ADDR_OFFSET);
+        iregs[RV_REG_a2] = PAGE_LEN_BYTE;
 
         if(log_syscall) {
             sprintf(log_bufs[cpu_id].data(), "CPU%d: Page Fault @0x%lx @0x%lx", cpu_id, pc, missed << PAGE_ADDR_OFFSET);
@@ -377,7 +399,7 @@ VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError 
     else {
         sprintf(log_bufs[cpu_id].data(), "CPU%d: Unknown Exception %d @0x%lx", cpu_id, (int32_t)expno, pc);
         LOG(ERROR)<<(log_bufs[cpu_id].data());
-        assert(0);
+        simroot_assert(0);
     }
 }
 
@@ -404,53 +426,213 @@ void SimSystemMultiCore::dma_complete_callback(uint64_t callbackid) {
 
 void * SimSystemMultiCore::poll_wait_thread_function(void * _param) {
     PollWaitThread *p = (PollWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
 
     double simtime2realtime = ((double)(simroot::get_global_freq()) / (double)(simroot::get_sim_tick_per_real_sec()));
-    uint64_t ret = poll((struct pollfd *)(p->host_fds), p->nfds, (simtime2realtime * p->timeout_us) / 1000);
-    p->thread->context_stack.back().regs[isa::ireg_index_of("a0")] = ret;
+    int64_t ret = poll((struct pollfd *)(p->host_fds), p->nfds, (simtime2realtime * p->timeout_us) / 1000);
+    if(ret < 0) ret = -errno;
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
 
-    p->sys->sch_lock.lock();
-    p->sys->poll_wait_threads.erase(p->thread);
-    p->sys->insert_ready_thread_nolock(p->thread, p->cpuid);
-    p->sys->sch_lock.unlock();
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_poll Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->poll_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
 
     return nullptr;
 }
+
+void * SimSystemMultiCore::select_wait_thread_function(void * _param) {
+    SelectWaitThread *p = (SelectWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
+
+    double simtime2realtime = ((double)(simroot::get_global_freq()) / (double)(simroot::get_sim_tick_per_real_sec()));
+    uint64_t rtmo_us = (simtime2realtime * p->timeout_us);
+    timespec timeout;
+    timeout.tv_sec = rtmo_us / 1000000UL;
+    timeout.tv_nsec = 1000UL * (rtmo_us % 1000000UL);
+    
+    int64_t ret = pselect(
+        p->host_nfds,
+        ((p->readfds)?(&p->host_readfds):nullptr),
+        ((p->writefds)?(&p->host_writefds):nullptr),
+        ((p->exceptfds)?(&p->host_exceptfds):nullptr),
+        &timeout,
+        nullptr
+    );
+    if(ret < 0) ret = -errno;
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
+
+    if(ret > 0) {
+        if(p->readfds) {
+            FD_ZERO(p->readfds);
+            for(int i = 0; i < p->host_nfds; i++) {
+                if(FD_ISSET(i, &p->host_readfds)) FD_SET(p->hostfd_to_simfd[i], p->readfds);
+            }
+        }
+        if(p->writefds) {
+            FD_ZERO(p->writefds);
+            for(int i = 0; i < p->host_nfds; i++) {
+                if(FD_ISSET(i, &p->host_writefds)) FD_SET(p->hostfd_to_simfd[i], p->writefds);
+            }
+        }
+        if(p->exceptfds) {
+            FD_ZERO(p->exceptfds);
+            for(int i = 0; i < p->host_nfds; i++) {
+                if(FD_ISSET(i, &p->host_exceptfds)) FD_SET(p->hostfd_to_simfd[i], p->exceptfds);
+            }
+        }
+    }
+
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_select Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->select_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
+
+    return nullptr;
+}
+
+void * SimSystemMultiCore::sleep_wait_thread_function(void * _param) {
+    SleepWaitThread *p = (SleepWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
+
+    int64_t ret = clock_nanosleep(0, 0, &p->host_time, 0);
+    if(ret < 0) ret = -errno;
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
+
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_clock_nanosleep Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->poll_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
+
+    return nullptr;
+}
+
+void * SimSystemMultiCore::blkread_wait_thread_function(void * _param) {
+    BlockreadWaitThread *p = (BlockreadWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
+
+    int64_t ret = read(p->hostfd, p->buf, p->bufsz);
+    if(ret < 0) ret = -errno;
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
+
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_read_blocked Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->blkread_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
+
+    return nullptr;
+}
+
+void * SimSystemMultiCore::socksend_wait_thread_function(void * _param) {
+    SockSendWaitThread *p = (SockSendWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
+
+    int64_t ret = sendto(p->hostfd, p->buf, p->bufsz, p->flags, (struct sockaddr *)(p->dest_addr), p->addrlen);
+    if(ret < 0) ret = -errno;
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
+
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_sendto Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->socksend_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
+
+    return nullptr;
+}
+
+void * SimSystemMultiCore::sockrecv_wait_thread_function(void * _param) {
+    SockRecvWaitThread *p = (SockRecvWaitThread*)_param;
+    SimSystemMultiCore * sys = p->sys;
+
+    int64_t ret = recvmsg(p->hostfd, &p->msg, p->flags);
+    if(ret < 0) ret = -errno;
+    else {
+        p->hbuf_msg->msg_controllen = p->msg.msg_controllen;
+        p->hbuf_msg->msg_namelen = p->msg.msg_namelen;
+        p->hbuf_msg->msg_flags = p->msg.msg_flags;
+    }
+    p->thread->context_stack.back().regs[RV_REG_a0] = ret;
+
+    if(sys->log_syscall) {
+        char buf[256];
+        sprintf(buf, "Thread %ld Syscall host_recvmsg Return %ld", p->thread->tid, ret);
+        simroot::print_log_info(buf);
+    }
+
+    sys->sch_lock.lock();
+    sys->sockrecv_wait_threads.erase(p->thread);
+    sys->insert_ready_thread_nolock(p->thread, p->cpuid);
+    sys->sch_lock.unlock();
+
+    return nullptr;
+}
+
+
+
 
 // -----------------------------------------------------------------
 //   Syscall Handlers
 // -----------------------------------------------------------------
 
 #define CURT (cpu_devs[cpu_id].exec_thread)
-#define IREG_V(rname) (iregs[isa::ireg_index_of(#rname)])
+#define IREG_V(rname) (iregs[RV_REG_##rname])
 #define HOST_ADDR_OF_IREG(rname) (syscall_memory->get_host_addr(IREG_V(rname)))
-#define CPULOG(fmt, ...) if(log_syscall) { sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); simroot::print_log_info(log_bufs[cpu_id].data());}
-#define CPUFLOG(fmt, ...) sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); simroot::print_log_info(log_bufs[cpu_id].data());
-#define CPUERROR(fmt, ...) sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); LOG(ERROR)<<(log_bufs[cpu_id].data());
+#define CPULOG(fmt, ...) do {if(log_syscall) { sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
+#define CPUFLOG(fmt, ...) do {sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); simroot::print_log_info(log_bufs[cpu_id].data());} while(0)
+#define CPUERROR(fmt, ...) do {sprintf(log_bufs[cpu_id].data(), fmt, ##__VA_ARGS__ ); LOG(ERROR)<<(log_bufs[cpu_id].data());} while(0)
 
-#define LOG_SYSCALL_1(name, f0, a0, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_1(name, f0, a0, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ") -> " rf0 "", cpu_id, a0, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
-#define LOG_SYSCALL_2(name, f0, a0, f1, a1, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_2(name, f0, a0, f1, a1, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ") -> " rf0 "", cpu_id, a0, a1, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
-#define LOG_SYSCALL_3(name, f0, a0, f1, a1, f2, a2, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_3(name, f0, a0, f1, a1, f2, a2, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ", " f2 ") -> " rf0 "", cpu_id, a0, a1, a2, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
-#define LOG_SYSCALL_4(name, f0, a0, f1, a1, f2, a2, f3, a3, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_4(name, f0, a0, f1, a1, f2, a2, f3, a3, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ", " f2 ", " f3 ") -> " rf0 "", cpu_id, a0, a1, a2, a3, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
-#define LOG_SYSCALL_5(name, f0, a0, f1, a1, f2, a2, f3, a3, f4, a4, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_5(name, f0, a0, f1, a1, f2, a2, f3, a3, f4, a4, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ", " f2 ", " f3 ", " f4 ") -> " rf0 "", cpu_id, a0, a1, a2, a3, a4, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
-#define LOG_SYSCALL_6(name, f0, a0, f1, a1, f2, a2, f3, a3, f4, a4, f5, a5, rf0, r) if(log_syscall) {\
+#define LOG_SYSCALL_6(name, f0, a0, f1, a1, f2, a2, f3, a3, f4, a4, f5, a5, rf0, r) do {if(log_syscall) {\
 sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall " name "(" f0 ", " f1 ", " f2 ", " f3 ", " f4 ", " f5 ") -> " rf0 "", cpu_id, a0, a1, a2, a3, a4, a5, r);\
-simroot::print_log_info(log_bufs[cpu_id].data());}
+simroot::print_log_info(log_bufs[cpu_id].data());}} while(0)
 
 
 MP_SYSCALL_DEFINE(24, dup3) {
@@ -459,7 +641,7 @@ MP_SYSCALL_DEFINE(24, dup3) {
     uint64_t flg = IREG_V(a2);
     int32_t host_oldfd = CURT->fdtable_trans(sim_oldfd);
     int32_t host_newfd = CURT->fdtable_trans(sim_newfd);
-    uint64_t ret = 0;
+    int64_t ret = 0;
 
     if(flg) {
         CPUERROR("Unknown dup3 flag: 0x%lx", flg);
@@ -467,10 +649,10 @@ MP_SYSCALL_DEFINE(24, dup3) {
     }
 
     if(!host_oldfd) {
-        ret = EBADF;
+        ret = -EBADF;
     }
     else if(sim_newfd == sim_oldfd) {
-        ret = EINVAL;
+        ret = -EINVAL;
     }
     else {
         if(host_newfd > 2) {
@@ -480,21 +662,25 @@ MP_SYSCALL_DEFINE(24, dup3) {
         ret = 0;
     }
 
+    LOG_SYSCALL_3("dup3", "%ld", IREG_V(a0), "%ld", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(57, close) {
     int32_t host_fd = CURT->fdtable_pop(IREG_V(a0));
-    uint64_t ret = ((host_fd > 2)?close(host_fd):0);
+    int64_t ret = ((host_fd > 2)?close(host_fd):0);
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_2("close", "%ld", IREG_V(a0), "%d", host_fd, "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(62, lseek) {
-    uint64_t ret = lseek(CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2));
-    LOG_SYSCALL_3("lseek", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", ret);
+    int64_t ret = lseek(CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_3("lseek", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
@@ -518,8 +704,7 @@ MP_SYSCALL_DEFINE(94, exitgroup) {
                 else iter++;
             }
         }
-        dma_wait_threads.erase(child);
-        poll_wait_threads.erase(child);
+        cancle_wait_thread_nolock(child);
         for(auto iter = ready_threads.begin(); iter != ready_threads.end(); ) {
             if(*iter == child) iter = ready_threads.erase(iter);
             else iter++;
@@ -529,7 +714,7 @@ MP_SYSCALL_DEFINE(94, exitgroup) {
         CPUFLOG("CPU%d : Cancle Thread %ld", cpu_id, child->tid);
         delete child;
     }
-    if(thread->clear_child_tid) {
+    if(thread->do_child_cleartid) {
         // Wake up all futex
         PhysAddrT paddr = 0;
         simroot_assert(thread->va2pa(thread->clear_child_tid, &paddr, 0) == SimError::success);
@@ -537,7 +722,7 @@ MP_SYSCALL_DEFINE(94, exitgroup) {
         if(res != futex_wait_threads.end()) {
             auto &tl = res->second;
             for(auto &fwt : tl) {
-                fwt.thread->context_stack.back().regs[isa::ireg_index_of("a0")] = 0;
+                fwt.thread->context_stack.back().regs[RV_REG_a0] = 0;
                 insert_ready_thread_nolock(fwt.thread, fwt.last_cpu_id);
             }
             futex_wait_threads.erase(res);
@@ -584,6 +769,18 @@ MP_SYSCALL_DEFINE(99, set_robust_list) {
     return pc + 4;
 }
 
+MP_SYSCALL_DEFINE(122, sched_setaffinity) {
+    LOG_SYSCALL_3("sched_setaffinity", "%ld", IREG_V(a0), "%ld", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", 0UL);
+    IREG_V(a0) = 0;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(123, sched_getaffinity) {
+    LOG_SYSCALL_3("sched_getaffinity", "%ld", IREG_V(a0), "%ld", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", 0UL);
+    IREG_V(a0) = 0;
+    return pc + 4;
+}
+
 MP_SYSCALL_DEFINE(124, sched_yield) {
     LOG_SYSCALL_1("sched_yield", "%ld", IREG_V(a0), "%ld", 0UL);
     IREG_V(a0) = 0;
@@ -597,6 +794,16 @@ MP_SYSCALL_DEFINE(124, sched_yield) {
     return nextpc;
 }
 
+MP_SYSCALL_DEFINE(131, tgkill) {
+    LOG_SYSCALL_3("tgkill", "%ld", IREG_V(a0), "%ld", IREG_V(a1), "%ld", IREG_V(a2), "%ld", 0UL);
+    uint32_t signal = IREG_V(a2);
+    uint64_t tgid = IREG_V(a0);
+    uint64_t tid = IREG_V(a1);
+    IREG_V(a0) = -EINVAL;
+    CPUERROR("Unknown Signal %d\n", signal);
+    return pc + 4;
+}
+
 MP_SYSCALL_DEFINE(172, getpid) {
     int64_t ret = CURT->pid;
     LOG_SYSCALL_1("getpid", "%ld", IREG_V(a0), "%ld", ret);
@@ -606,6 +813,7 @@ MP_SYSCALL_DEFINE(172, getpid) {
 
 MP_SYSCALL_DEFINE(173, getppid) {
     int64_t ret = ((CURT->parent)?(CURT->parent->pid):getpid());
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_1("getppid", "%ld", IREG_V(a0), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -613,6 +821,7 @@ MP_SYSCALL_DEFINE(173, getppid) {
 
 MP_SYSCALL_DEFINE(174, getuid) {
     int64_t ret = getuid();
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_1("getuid", "%ld", IREG_V(a0), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -620,6 +829,7 @@ MP_SYSCALL_DEFINE(174, getuid) {
 
 MP_SYSCALL_DEFINE(175, geteuid) {
     int64_t ret = geteuid();
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_1("geteuid", "%ld", IREG_V(a0), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -627,6 +837,7 @@ MP_SYSCALL_DEFINE(175, geteuid) {
 
 MP_SYSCALL_DEFINE(176, getgid) {
     int64_t ret = getgid();
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_1("getgid", "%ld", IREG_V(a0), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -634,6 +845,7 @@ MP_SYSCALL_DEFINE(176, getgid) {
 
 MP_SYSCALL_DEFINE(177, getegid) {
     int64_t ret = getegid();
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_1("getegid", "%ld", IREG_V(a0), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -647,9 +859,18 @@ MP_SYSCALL_DEFINE(178, gettid) {
 }
 
 MP_SYSCALL_DEFINE(198, socket) {
-    uint64_t ret = socket(IREG_V(a0), IREG_V(a1), IREG_V(a2));
-    ret = CURT->fdtable_insert(ret);
+    int64_t ret = socket(IREG_V(a0), IREG_V(a1), IREG_V(a2));
+    if(ret < 0) ret = -errno;
+    else ret = CURT->fdtable_insert(ret);
     LOG_SYSCALL_3("socket", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(201, listen) {
+    int64_t ret = listen(CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_2("listen", "%ld", IREG_V(a0), "%ld", IREG_V(a1), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
@@ -693,7 +914,7 @@ MP_SYSCALL_DEFINE(222, mmap) {
         string info = " ";
         if(flags & MAP_STACK) info = "stack";
         ret = (flags & MAP_FIXED)?(thread->sys_mmap_fixed(vaddr, length, pgflg, -1, 0, info)):(thread->sys_mmap(length, pgflg, -1, 0, info));
-        LOG_SYSCALL_6("mmap", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", IREG_V(a4), "0x%lx", IREG_V(a5), "0x%lx", ret);
+        LOG_SYSCALL_6("mmap", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", IREG_V(a4), "0x%lx", IREG_V(a5), "%ld", ret);
         IREG_V(a0) = ret;
         return pc + 4;
     }
@@ -736,7 +957,7 @@ MP_SYSCALL_DEFINE(222, mmap) {
                 .dst = paddr,
                 .size = (uint32_t)cur,
                 .flag = DMAFLG_SRC_HOST,
-                .callback = 0
+                .callback = (uint64_t)thread
             });
         }
         while(cur < length) {
@@ -846,6 +1067,7 @@ MP_SYSCALL_DEFINE(905, host_free_cow_tmp_page) {
 
 MP_SYSCALL_DEFINE(1017, host_getcwd) {
     char* retp = getcwd((char*)HOST_ADDR_OF_IREG(a0), IREG_V(a1));
+    if((int64_t)retp < 0) retp = (char*)((uint64_t)(-errno));
     LOG_SYSCALL_2("host_getcwd", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "%s", (retp?((char*)HOST_ADDR_OF_IREG(a0)):""));
     IREG_V(a0) = (uint64_t)retp;
     return pc + 4;
@@ -855,8 +1077,9 @@ MP_SYSCALL_DEFINE(1025, host_fcntl) {
     int32_t hostfd = CURT->fdtable_trans(IREG_V(a0));
     uint64_t op = IREG_V(a1);
     int64_t ret = 0;
-    if(op == F_GETFD || op == F_SETFD) {
+    if(op == F_GETFD || op == F_SETFD || op == F_GETFL || op == F_SETFL) {
         ret = fcntl(hostfd, op, IREG_V(a2));
+        if(ret < 0) ret = -errno;
     }
     else [[unlikely]] {
         CPUERROR("Unknown fcntl op 0x%lx", op);
@@ -874,6 +1097,7 @@ MP_SYSCALL_DEFINE(1029, host_ioctl) {
         simroot_assert(0);
     }
     int64_t ret = ioctl(CURT->fdtable_trans(IREG_V(a0)), cmd, HOST_ADDR_OF_IREG(a2));
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_4("host_ioctl", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -889,6 +1113,7 @@ MP_SYSCALL_DEFINE(910, host_ioctl_siocgifconf) {
     tmp.len = p->len;
     tmp.buf = ((p->buf)?(syscall_memory->get_host_addr((uint64_t)(p->buf))):nullptr);
     int64_t ret = ioctl(CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), &tmp);
+    if(ret < 0) ret = -errno;
     p->len = tmp.len;
     LOG_SYSCALL_4("host_ioctl", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
@@ -896,15 +1121,17 @@ MP_SYSCALL_DEFINE(910, host_ioctl_siocgifconf) {
 }
 
 MP_SYSCALL_DEFINE(1048, host_faccessat) {
-    uint64_t ret = faccessat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
+    int64_t ret = faccessat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_4("host_faccessat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(1056, host_openat) {
-    uint64_t ret = openat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
-    ret = CURT->fdtable_insert(ret);
+    int64_t ret = openat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
+    if(ret < 0) ret = -errno;
+    else ret = CURT->fdtable_insert(ret);
     LOG_SYSCALL_4("host_openat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "0x%lx", IREG_V(a2), "%ld", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -912,27 +1139,215 @@ MP_SYSCALL_DEFINE(1056, host_openat) {
 
 MP_SYSCALL_DEFINE(1059, host_pipe2) {
     int32_t fds[2];
-    uint64_t ret = pipe2(fds, IREG_V(a1));
+    int64_t ret = pipe2(fds, IREG_V(a1));
+    if(ret < 0) ret = -errno;
     int32_t *simfds = (int32_t*)HOST_ADDR_OF_IREG(a0);
     simfds[0] = CURT->fdtable_insert(fds[0]);
     simfds[1] = CURT->fdtable_insert(fds[1]);
-    LOG_SYSCALL_3("host_pipe2", "%ld", IREG_V(a1), "->%d", simfds[0], "->%d", simfds[1], "0x%lx", ret);
+    LOG_SYSCALL_3("host_pipe2", "%ld", IREG_V(a1), "->%d", simfds[0], "->%d", simfds[1], "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1061, host_getdents) {
+    int64_t ret = syscall(SYS_getdents, CURT->fdtable_trans(IREG_V(a0)), (void*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    LOG_SYSCALL_3("host_getdents", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(1063, host_read) {
-    uint64_t ret = read(CURT->fdtable_trans(IREG_V(a0)), (void*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
-    LOG_SYSCALL_3("host_read", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", ret);
+    int32_t simfd = IREG_V(a0);
+    int32_t hostfd = CURT->fdtable_trans(IREG_V(a0));
+    if(hostfd < 0) {
+        IREG_V(a0) = -EBADF;
+        return pc + 4;
+    }
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(hostfd, &fds);
+    struct timeval zerotime;
+    zerotime.tv_sec = zerotime.tv_usec = 0;
+    int64_t select_ret = select(hostfd + 1, &fds, nullptr, nullptr, &zerotime);
+    if(select_ret > 0) {
+        int64_t ret = read(CURT->fdtable_trans(IREG_V(a0)), (void*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+        if(ret < 0) ret = -errno;
+        LOG_SYSCALL_3("host_read", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+        IREG_V(a0) = ret;
+        return pc + 4;
+    }
+    else if(select_ret == 0) {
+        BlockreadWaitThread wt;
+        wt.thread = CURT;
+        wt.sys = this;
+        wt.cpuid = cpu_id;
+        wt.simfd = simfd;
+        wt.hostfd = hostfd;
+        wt.buf = (uint8_t*)HOST_ADDR_OF_IREG(a1);
+        wt.bufsz = IREG_V(a2);
+        
+        LOG_SYSCALL_3("host_read_blocked", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%s", "blocked");
+
+        sch_lock.lock();
+        auto iter = blkread_wait_threads.emplace(CURT, wt).first;
+        sch_lock.unlock();
+        pthread_create(&wt.th, nullptr, blkread_wait_thread_function, &(iter->second));
+
+        CURT->save_context_stack(pc + 4, iregs, true);
+        sch_lock.lock();
+        bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+        sch_lock.unlock();
+        if(ret) {
+            simroot_assert(cpu_devs[cpu_id].exec_thread);
+            RVRegArray regs;
+            VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+            cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+            return nextpc;
+        }
+        cpu_devs[cpu_id].cpu->halt();
+        return 0;
+    }
+    
+    CPUERROR("CPU %d Failed to read fd %d->%d", cpu_id, simfd, hostfd);
+    simroot_assert(0);
+}
+
+MP_SYSCALL_DEFINE(1064, host_write) {
+    if(IREG_V(a0) == 1) {
+        simroot::log_stdout((char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    }
+    else if(IREG_V(a0) == 2) {
+        simroot::log_stderr((char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    }
+    int64_t ret = write(CURT->fdtable_trans(IREG_V(a0)), (void*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_3("host_write", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
-MP_SYSCALL_DEFINE(1064, host_write) {
-    uint64_t ret = write(CURT->fdtable_trans(IREG_V(a0)), (void*)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
-    LOG_SYSCALL_3("host_write", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", ret);
-    IREG_V(a0) = ret;
-    return pc + 4;
+MP_SYSCALL_DEFINE(1072, host_pselect6) {
+    int nfds = IREG_V(a0);
+    fd_set *readfds = (fd_set*)HOST_ADDR_OF_IREG(a1);
+    fd_set *writefds = (fd_set*)HOST_ADDR_OF_IREG(a2);
+    fd_set *exceptfds = (fd_set*)HOST_ADDR_OF_IREG(a3);
+    struct timespec * tmo = (struct timespec *)HOST_ADDR_OF_IREG(a4);
+    sigset_t * sigmask = (sigset_t *)HOST_ADDR_OF_IREG(a5);
+
+    if(sigmask) {
+        CPUERROR("Un-implemented: pselect with sigmask");
+        simroot_assert(0);
+    }
+
+    SelectWaitThread wt;
+    wt.thread = CURT;
+    wt.nfds = nfds;
+    wt.timeout_us = (tmo?(tmo->tv_nsec / 1000L + tmo->tv_sec * 1000000L):-1L);
+    wt.sys = this;
+    wt.cpuid = cpu_id;
+    wt.readfds = readfds;
+    wt.writefds = writefds;
+    wt.exceptfds = exceptfds;
+    FD_ZERO(&wt.host_readfds);
+    FD_ZERO(&wt.host_writefds);
+    FD_ZERO(&wt.host_exceptfds);
+    
+    bool invalid_fd = false;
+    for(int i = 0; i < nfds; i++) {
+        if(readfds && FD_ISSET(i, readfds)) {
+            int32_t hostfd = CURT->fdtable_trans(i);
+            if(hostfd < 0) {
+                invalid_fd = true;
+                break;
+            }
+            wt.host_nfds = std::max<int32_t>(wt.host_nfds, hostfd + 1);
+            wt.hostfd_to_simfd.emplace(hostfd, i);
+            FD_SET(hostfd, &wt.host_readfds);
+        }
+        if(writefds && FD_ISSET(i, writefds)) {
+            int32_t hostfd = CURT->fdtable_trans(i);
+            if(hostfd < 0) {
+                invalid_fd = true;
+                break;
+            }
+            wt.host_nfds = std::max<int32_t>(wt.host_nfds, hostfd + 1);
+            wt.hostfd_to_simfd.emplace(hostfd, i);
+            FD_SET(hostfd, &wt.host_writefds);
+        }
+        if(exceptfds && FD_ISSET(i, exceptfds)) {
+            int32_t hostfd = CURT->fdtable_trans(i);
+            if(hostfd < 0) {
+                invalid_fd = true;
+                break;
+            }
+            wt.host_nfds = std::max<int32_t>(wt.host_nfds, hostfd + 1);
+            wt.hostfd_to_simfd.emplace(hostfd, i);
+            FD_SET(hostfd, &wt.host_exceptfds);
+        }
+    }
+    
+    if(log_syscall) {
+        sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall host_pselect6: TMO %ldus", cpu_id, wt.timeout_us);
+        string str = string(log_bufs[cpu_id].data());
+        if(readfds) {
+            str += ", RFDs: ";
+            for(int i = 0; i < nfds; i++) {
+                if(FD_ISSET(i, readfds)) {
+                    sprintf(log_bufs[cpu_id].data(), "%d->%d ", i, CURT->fdtable_trans(i));
+                    str += string(log_bufs[cpu_id].data());
+                }
+            }
+        }
+        if(writefds) {
+            str += ", WFDs: ";
+            for(int i = 0; i < nfds; i++) {
+                if(FD_ISSET(i, writefds)) {
+                    sprintf(log_bufs[cpu_id].data(), "%d->%d ", i, CURT->fdtable_trans(i));
+                    str += string(log_bufs[cpu_id].data());
+                }
+            }
+        }
+        if(exceptfds) {
+            str += ", EFDs: ";
+            for(int i = 0; i < nfds; i++) {
+                if(FD_ISSET(i, exceptfds)) {
+                    sprintf(log_bufs[cpu_id].data(), "%d->%d ", i, CURT->fdtable_trans(i));
+                    str += string(log_bufs[cpu_id].data());
+                }
+            }
+        }
+        if(invalid_fd) {
+            str += " -> EFAULT";
+        }
+        else {
+            str += " -> 0";
+        }
+        simroot::print_log_info(str);
+    }
+    
+    if(invalid_fd) {
+        IREG_V(a0) = -EFAULT;
+        return pc + 4;
+    }
+
+    sch_lock.lock();
+    auto iter = select_wait_threads.emplace(CURT, wt).first;
+    sch_lock.unlock();
+    pthread_create(&wt.th, nullptr, select_wait_thread_function, &(iter->second));
+
+    CURT->save_context_stack(pc + 4, iregs, true);
+    sch_lock.lock();
+    bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(ret) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
 }
 
 MP_SYSCALL_DEFINE(1073, host_ppoll) {
@@ -943,17 +1358,10 @@ MP_SYSCALL_DEFINE(1073, host_ppoll) {
 
     if(sigmask) {
         CPUERROR("Un-implemented: ppoll with sigmask");
-        assert(0);
+        simroot_assert(0);
     }
     
-    for(uint64_t i = 0; i < nfds; i++) {
-        hostfd[i].fd = CURT->fdtable_trans(hostfd[i].fd);
-    }
-
-    sch_lock.lock();
-    auto iter = poll_wait_threads.emplace(CURT, PollWaitThread()).first;
-    sch_lock.unlock();
-    PollWaitThread &wt = iter->second;
+    PollWaitThread wt;
     wt.thread = CURT;
     wt.host_fds = (uint8_t*)hostfd;
     wt.nfds = nfds;
@@ -961,9 +1369,43 @@ MP_SYSCALL_DEFINE(1073, host_ppoll) {
     wt.sys = this;
     wt.cpuid = cpu_id;
 
-    LOG_SYSCALL_4("host_ppoll", "0x%lx", IREG_V(a0), "%ld", IREG_V(a1), "%ldus", wt.timeout_us, "0x%lx", IREG_V(a3), "%s", "xxx");
+    bool invalid_fd = false;
+    if(log_syscall) {
+        sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall host_ppoll: TMO %ldus, FDs: ", cpu_id, wt.timeout_us);
+        string str = string(log_bufs[cpu_id].data());
+        for(uint64_t i = 0; i < nfds; i++) {
+            int simfd = hostfd[i].fd;
+            hostfd[i].fd = CURT->fdtable_trans(simfd);
+            if(hostfd[i].fd < 0) invalid_fd = true;
+            sprintf(log_bufs[cpu_id].data(), "%d->%d %d, ", simfd, hostfd[i].fd, hostfd[i].events);
+            str += string(log_bufs[cpu_id].data());
+        }
+        if(invalid_fd) {
+            str += " -> EFAULT";
+        }
+        else {
+            str += " -> 0";
+        }
+        simroot::print_log_info(str);
+    }
+    else {
+        for(uint64_t i = 0; i < nfds; i++) {
+            hostfd[i].fd = CURT->fdtable_trans(hostfd[i].fd);
+            if(hostfd[i].fd < 0) invalid_fd = true;
+        }
+    }
 
-    pthread_create(&wt.th, nullptr, poll_wait_thread_function, &wt);
+    // LOG_SYSCALL_4("host_ppoll", "0x%lx", IREG_V(a0), "%ld", IREG_V(a1), "%ldus", wt.timeout_us, "0x%lx", IREG_V(a3), "%s", "xxx");
+
+    if(invalid_fd) {
+        IREG_V(a0) = -EFAULT;
+        return pc + 4;
+    }
+
+    sch_lock.lock();
+    auto iter = poll_wait_threads.emplace(CURT, wt).first;
+    sch_lock.unlock();
+    pthread_create(&wt.th, nullptr, poll_wait_thread_function, &(iter->second));
 
     CURT->save_context_stack(pc + 4, iregs, true);
     sch_lock.lock();
@@ -981,21 +1423,24 @@ MP_SYSCALL_DEFINE(1073, host_ppoll) {
 }
 
 MP_SYSCALL_DEFINE(1078, host_readlinkat) {
-    uint64_t ret = readlinkat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), (char*)HOST_ADDR_OF_IREG(a2), IREG_V(a3));
+    int64_t ret = readlinkat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), (char*)HOST_ADDR_OF_IREG(a2), IREG_V(a3));
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_4("host_readlinkat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "%s", (char*)HOST_ADDR_OF_IREG(a2), "%ld", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(1079, host_newfstatat) {
-    uint64_t ret = fstatat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), (struct stat*)HOST_ADDR_OF_IREG(a2), IREG_V(a3));
+    int64_t ret = fstatat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), (struct stat*)HOST_ADDR_OF_IREG(a2), IREG_V(a3));
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_4("host_newfstatat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(1080, host_fstat) {
-    uint64_t ret = fstat(CURT->fdtable_trans(IREG_V(a0)), (struct stat*)HOST_ADDR_OF_IREG(a1));
+    int64_t ret = fstat(CURT->fdtable_trans(IREG_V(a0)), (struct stat*)HOST_ADDR_OF_IREG(a1));
+    if(ret < 0) ret = -errno;
     LOG_SYSCALL_2("host_newfstatat", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
@@ -1013,7 +1458,7 @@ MP_SYSCALL_DEFINE(1093, host_exit) {
         if(res != futex_wait_threads.end()) {
             auto &tl = res->second;
             for(auto &fwt : tl) {
-                fwt.thread->context_stack.back().regs[isa::ireg_index_of("a0")] = 0;
+                fwt.thread->context_stack.back().regs[RV_REG_a0] = 0;
                 insert_ready_thread_nolock(fwt.thread, fwt.last_cpu_id);
             }
             futex_wait_threads.erase(res);
@@ -1063,7 +1508,7 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
 
     if(futex_op == FUTEX_WAIT || futex_op == FUTEX_WAIT_BITSET) {
         if(pargs->fval != pargs->val) {
-            IREG_V(a0) = EAGAIN;
+            IREG_V(a0) = -EAGAIN;
             return pc + 4;
         }
         CPULOG("CPU %d Futex Wait", cpu_id);
@@ -1122,10 +1567,45 @@ MP_SYSCALL_DEFINE(1098, host_futex) {
     return 0;
 }
 
+MP_SYSCALL_DEFINE(1115, host_clock_nanosleep) {
+    struct timespec* time = (struct timespec*)HOST_ADDR_OF_IREG(a2);
+    double simtime2realtime = ((double)(simroot::get_global_freq()) / (double)(simroot::get_sim_tick_per_real_sec()));
+    struct timespec ht;
+    ht.tv_nsec = time->tv_nsec * simtime2realtime;
+    ht.tv_sec = time->tv_sec * simtime2realtime;
+    ht.tv_sec += (ht.tv_nsec / 1000000000UL);
+    ht.tv_nsec = (ht.tv_nsec % 1000000000UL);
+    
+    SleepWaitThread wt;
+    wt.thread = CURT;
+    wt.host_time = ht;
+    wt.sys = this;
+    wt.cpuid = cpu_id;
+
+    sch_lock.lock();
+    auto iter = sleep_wait_threads.emplace(CURT, wt).first;
+    sch_lock.unlock();
+    pthread_create(&wt.th, nullptr, sleep_wait_thread_function, &(iter->second));
+
+    CURT->save_context_stack(pc + 4, iregs, true);
+    sch_lock.lock();
+    bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(ret) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
+}
+
 MP_SYSCALL_DEFINE(1113, host_clock_gettime) {
     struct timespec* time = (struct timespec*)HOST_ADDR_OF_IREG(a1);
     uint64_t time_us = 0;
-    uint64_t ret = 0;
+    int64_t ret = 0;
     switch (IREG_V(a0))
     {
     case CLOCK_REALTIME:
@@ -1167,7 +1647,8 @@ MP_SYSCALL_DEFINE(1135, host_sigprocmask) {
 
 MP_SYSCALL_DEFINE(1199, host_socketpair) {
     int32_t fds[2];
-    uint64_t ret = socketpair(IREG_V(a0), IREG_V(a1), IREG_V(a2), fds);
+    int64_t ret = socketpair(IREG_V(a0), IREG_V(a1), IREG_V(a2), fds);
+    if(ret < 0) ret = -errno;
     int32_t *simfds = (int32_t*)HOST_ADDR_OF_IREG(a3);
     simfds[0] = CURT->fdtable_insert(fds[0]);
     simfds[1] = CURT->fdtable_insert(fds[1]);
@@ -1176,21 +1657,140 @@ MP_SYSCALL_DEFINE(1199, host_socketpair) {
     return pc + 4;
 }
 
-MP_SYSCALL_DEFINE(1203, host_connect) {
-    uint64_t ret = connect(CURT->fdtable_trans(IREG_V(a0)), (struct sockaddr *)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
-    LOG_SYSCALL_3("host_connect", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
+MP_SYSCALL_DEFINE(1200, host_bind) {
+    int64_t ret = bind(CURT->fdtable_trans(IREG_V(a0)), (struct sockaddr *)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_3("host_bind", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
 }
 
-MP_SYSCALL_DEFINE(1208, host_setsockopt) {
-    uint64_t optlen = IREG_V(a4);
-    uint64_t ret = setsockopt(
-        CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2), optlen?(HOST_ADDR_OF_IREG(a3)):((void*)IREG_V(a3)), optlen
-    );
-    LOG_SYSCALL_5("host_setsockopt", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", IREG_V(a4), "%ld", ret);
+MP_SYSCALL_DEFINE(1203, host_connect) {
+    int64_t ret = connect(CURT->fdtable_trans(IREG_V(a0)), (struct sockaddr *)HOST_ADDR_OF_IREG(a1), IREG_V(a2));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_3("host_connect", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%ld", ret);
     IREG_V(a0) = ret;
     return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1204, host_getsockname) {
+    int64_t ret = getsockname(CURT->fdtable_trans(IREG_V(a0)), (struct sockaddr *)HOST_ADDR_OF_IREG(a1), (uint32_t*)HOST_ADDR_OF_IREG(a2));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_3("host_getsockname", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "%d", *(uint32_t*)HOST_ADDR_OF_IREG(a2), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1206, host_sendto) {
+    int32_t simfd = IREG_V(a0);
+    int32_t hostfd = CURT->fdtable_trans(simfd);
+    if(hostfd < 0) {
+        IREG_V(a0) = -EBADF;
+        return pc + 4;
+    }
+    SockSendWaitThread wt;
+    wt.thread = CURT;
+    wt.sys = this;
+    wt.cpuid = cpu_id;
+    wt.simfd = simfd;
+    wt.hostfd = hostfd;
+    wt.buf = (uint8_t*)HOST_ADDR_OF_IREG(a1);
+    wt.bufsz = IREG_V(a2);
+    wt.flags = IREG_V(a3);
+    wt.dest_addr = (uint8_t*)HOST_ADDR_OF_IREG(a4);
+    wt.addrlen = IREG_V(a5);
+    
+    LOG_SYSCALL_6("host_sendto", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "%ld", IREG_V(a2), "0x%lx", IREG_V(a3), "0x%lx", IREG_V(a4), "%ld", IREG_V(a5), "%s", "blocked");
+
+    sch_lock.lock();
+    auto iter = socksend_wait_threads.emplace(CURT, wt).first;
+    sch_lock.unlock();
+    pthread_create(&wt.th, nullptr, socksend_wait_thread_function, &(iter->second));
+
+    CURT->save_context_stack(pc + 4, iregs, true);
+    sch_lock.lock();
+    bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(ret) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
+}
+
+MP_SYSCALL_DEFINE(1208, host_setsockopt) {
+    uint64_t optlen = IREG_V(a4);
+    int64_t ret = setsockopt(
+        CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2), optlen?(HOST_ADDR_OF_IREG(a3)):((void*)IREG_V(a3)), optlen
+    );
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_5("host_setsockopt", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", IREG_V(a4), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1209, host_getsockopt) {
+    int64_t ret = getsockopt(
+        CURT->fdtable_trans(IREG_V(a0)), IREG_V(a1), IREG_V(a2), HOST_ADDR_OF_IREG(a3), (uint32_t*)(HOST_ADDR_OF_IREG(a4))
+    );
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_5("host_getsockopt", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%d", *(uint32_t*)(HOST_ADDR_OF_IREG(a4)), "%ld", ret);
+    IREG_V(a0) = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1212, host_recvmsg) {
+    int32_t simfd = IREG_V(a0);
+    int32_t hostfd = CURT->fdtable_trans(simfd);
+    if(hostfd < 0) {
+        IREG_V(a0) = -EBADF;
+        return pc + 4;
+    }
+    SockRecvWaitThread wt;
+    wt.thread = CURT;
+    wt.sys = this;
+    wt.cpuid = cpu_id;
+    wt.simfd = simfd;
+    wt.hostfd = hostfd;
+    wt.hbuf_msg = ((struct msghdr*)HOST_ADDR_OF_IREG(a1));
+    wt.msg = *(wt.hbuf_msg);
+    wt.flags = IREG_V(a2);
+
+    if(wt.msg.msg_name) wt.msg.msg_name = syscall_memory->get_host_addr((uint64_t)wt.msg.msg_name);
+    if(wt.msg.msg_control) wt.msg.msg_control = syscall_memory->get_host_addr((uint64_t)wt.msg.msg_control);
+    struct iovec * host_iovecs = (struct iovec *)syscall_memory->get_host_addr((uint64_t)wt.msg.msg_iov);
+    wt.iovecs.resize(wt.msg.msg_iovlen);
+    for(uint64_t i = 0; i < wt.msg.msg_iovlen; i++) {
+        wt.iovecs[i].iov_len = host_iovecs[i].iov_len;
+        wt.iovecs[i].iov_base = syscall_memory->get_host_addr((uint64_t)host_iovecs[i].iov_base);
+    }
+    wt.msg.msg_iov = wt.iovecs.data();
+    
+    LOG_SYSCALL_3("host_recvmsg", "%ld", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "%s", "blocked");
+
+    sch_lock.lock();
+    auto iter = sockrecv_wait_threads.emplace(CURT, wt).first;
+    iter->second.msg.msg_iov = iter->second.iovecs.data();
+    sch_lock.unlock();
+    pthread_create(&wt.th, nullptr, sockrecv_wait_thread_function, &(iter->second));
+
+    CURT->save_context_stack(pc + 4, iregs, true);
+    sch_lock.lock();
+    bool ret = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(ret) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
 }
 
 MP_SYSCALL_DEFINE(1220, host_clone) {
@@ -1211,7 +1811,7 @@ MP_SYSCALL_DEFINE(1220, host_clone) {
     memcpy(newregs.data(), iregs.data(), iregs.size() * sizeof(uint64_t));
     newregs[isa::ireg_index_of("tp")] = (tls?tls:IREG_V(tp));
     newregs[isa::ireg_index_of("sp")] = (newsp?newsp:IREG_V(sp));
-    newregs[isa::ireg_index_of("a0")] = 0;
+    newregs[RV_REG_a0] = 0;
     newthread->save_context_stack(pc + 4, newregs, true);
     for(auto &c : newthread->context_stack) {
         c.regs[isa::ireg_index_of("tp")] = newregs[isa::ireg_index_of("tp")];
@@ -1224,13 +1824,94 @@ MP_SYSCALL_DEFINE(1220, host_clone) {
 
     LOG_SYSCALL_5("host_clone", "0x%lx", IREG_V(a0), "0x%lx", IREG_V(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "0x%lx", IREG_V(a4), "%ld", ret);
     
-    iregs[isa::ireg_index_of("a0")] = ret;
+    iregs[RV_REG_a0] = ret;
     return pc + 4;
 }
 // unsigned long, clone_flags, unsigned long, newsp,
 // 		 int __user *, parent_tidptr,
 // 		 unsigned long, tls,
 // 		 int __user *, child_tidptr
+
+MP_SYSCALL_DEFINE(1221, host_execve) {
+    char *pathname = (char*)HOST_ADDR_OF_IREG(a0);
+    char **argv = (char**)HOST_ADDR_OF_IREG(a1);
+    char **envp = (char**)HOST_ADDR_OF_IREG(a2);
+
+    SimWorkload workload;
+    workload.file_path = string(pathname);
+    workload.ldpaths = def_ldpaths;
+    workload.stack_size = def_stacksz;
+    workload.syscall_proxy_lib_path = def_syscall_proxy_path;
+
+    for(char **p = argv; *p != nullptr; p++) {
+        workload.argv.emplace_back(string((char*)syscall_memory->get_host_addr((uint64_t)(*p))));
+    }
+    for(char **p = envp; *p != nullptr; p++) {
+        workload.envs.emplace_back(string((char*)syscall_memory->get_host_addr((uint64_t)(*p))));
+    }
+
+    if(log_syscall) {
+        sprintf(log_bufs[cpu_id].data(), "CPU %d Syscall host_execve: ", cpu_id);
+        string fullargv = string(log_bufs[cpu_id].data());
+        for(auto &s : workload.argv) {
+            fullargv += (", " + s);
+        }
+        simroot::print_log_info(fullargv);
+    }
+
+    uint64_t entry = 0, sp = 0;
+    list<MemPagesToLoad> ldpg;
+    CURT->elf_exec(workload, &ldpg, &entry, &sp);
+
+    auto &context = CURT->context_stack.back();
+    context.recover_a0 = true;
+    isa::zero_regs(context.regs);
+    context.regs[isa::ireg_index_of("sp")] = sp;
+    context.regs[0] = entry;
+
+    CURT->save_context_stack(pc + 4, iregs, true);
+
+    simroot_assertf(!ldpg.empty(), "No Segment Loaded in execve");
+
+    DMAWaitThread waitthread;
+    waitthread.thread = CURT;
+    waitthread.last_cpu_id = cpu_id;
+    list<DMARequestUnit> reqs;
+    for(MemPagesToLoad &pg : ldpg) {
+        simroot_assert(pg.data.size() >= PAGE_LEN_BYTE * pg.vpcnt);
+        for(uint64_t i = 0; i < pg.vpcnt; i++) {
+            uint8_t *buf = new uint8_t[PAGE_LEN_BYTE];
+            waitthread.to_free.push_back(buf);
+            memcpy(buf, pg.data.data() + (PAGE_LEN_BYTE * i), PAGE_LEN_BYTE);
+            PhysAddrT paddr = 0;
+            simroot_assert(CURT->va2pa((pg.vpi + i) << PAGE_ADDR_OFFSET, &paddr, 0) == SimError::success);
+            reqs.emplace_back(DMARequestUnit{
+                .src = (PhysAddrT)buf,
+                .dst = paddr,
+                .size = PAGE_LEN_BYTE,
+                .flag = DMAFLG_SRC_HOST,
+                .callback = (uint64_t)(CURT)
+            });
+        }
+    }
+    waitthread.ref_cnt = reqs.size();
+    dma->push_dma_requests(reqs);
+
+    sch_lock.lock();
+    dma_wait_threads.emplace(CURT, waitthread);
+    bool nextthread = switch_next_thread_nolock(cpu_id, SWFLAG_WAIT);
+    sch_lock.unlock();
+    if(nextthread) {
+        simroot_assert(cpu_devs[cpu_id].exec_thread);
+        RVRegArray regs;
+        VirtAddrT nextpc = cpu_devs[cpu_id].exec_thread->recover_context_stack(regs);
+        cpu_devs[cpu_id].cpu->redirect(nextpc, regs);
+        return nextpc;
+    }
+    cpu_devs[cpu_id].cpu->halt();
+    return 0;
+
+}
 
 MP_SYSCALL_DEFINE(1261, host_prlimit) {
     RVThread *thread = cpu_devs[cpu_id].exec_thread;
@@ -1271,7 +1952,7 @@ MP_SYSCALL_DEFINE(1435, host_clone3) {
     memcpy(newregs.data(), iregs.data(), iregs.size() * sizeof(uint64_t));
     newregs[isa::ireg_index_of("tp")] = (tls?tls:IREG_V(tp));
     newregs[isa::ireg_index_of("sp")] = (newsp?newsp:IREG_V(sp));
-    newregs[isa::ireg_index_of("a0")] = 0;
+    newregs[RV_REG_a0] = 0;
     newthread->save_context_stack(pc + 4, newregs, true);
     for(auto &c : newthread->context_stack) {
         c.regs[isa::ireg_index_of("tp")] = newregs[isa::ireg_index_of("tp")];
@@ -1285,7 +1966,15 @@ MP_SYSCALL_DEFINE(1435, host_clone3) {
 
     LOG_SYSCALL_5("host_clone3", "0x%lx", clone_flags, "0x%lx", newsp, "0x%lx", parent_tidptr, "0x%lx", tls, "0x%lx", child_tidptr, "%ld", ret);
     
-    iregs[isa::ireg_index_of("a0")] = ret;
+    iregs[RV_REG_a0] = ret;
+    return pc + 4;
+}
+
+MP_SYSCALL_DEFINE(1439, host_faccessat2) {
+    int64_t ret = faccessat(CURT->fdtable_trans(IREG_V(a0)), (char*)HOST_ADDR_OF_IREG(a1), IREG_V(a2), IREG_V(a3));
+    if(ret < 0) ret = -errno;
+    LOG_SYSCALL_4("host_faccessat", "%ld", IREG_V(a0), "%s", (char*)HOST_ADDR_OF_IREG(a1), "0x%lx", IREG_V(a2), "0x%lx", IREG_V(a3), "%ld", ret);
+    IREG_V(a0) = ret;
     return pc + 4;
 }
 

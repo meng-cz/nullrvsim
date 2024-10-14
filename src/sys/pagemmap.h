@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "spinlocks.h"
+#include "simroot.h"
 
 class PhysPageAllocator {
 
@@ -13,8 +14,8 @@ public:
     }
 
     inline void init_segment(PhysAddrT start, uint64_t size, uint8_t *p_mem) {
-        assert((start & (PAGE_LEN_BYTE - 1)) == 0);
-        assert((size & (PAGE_LEN_BYTE - 1)) == 0);
+        simroot_assert((start & (PAGE_LEN_BYTE - 1)) == 0);
+        simroot_assert((size & (PAGE_LEN_BYTE - 1)) == 0);
         for(PageAddrT ppa = start; ppa + PAGE_LEN_BYTE <= (start + size); ppa += PAGE_LEN_BYTE) {
             valid_pages.push_back(ppa >> PAGE_ADDR_OFFSET);
             page_real_addr.insert(std::make_pair(ppa >> PAGE_ADDR_OFFSET, p_mem + (ppa - start)));
@@ -23,7 +24,7 @@ public:
 
     inline uint8_t * real_addr_of(PageIndexT ppindex) {
         auto res = page_real_addr.find(ppindex);
-        assert(res != page_real_addr.end());
+        simroot_assert(res != page_real_addr.end());
         return res->second;
     }
 
@@ -32,7 +33,7 @@ public:
         if(valid_pages.empty()) {
             sprintf(log_buf, "Physical memory run out!!!");
             LOG(ERROR) << log_buf;
-            assert(0);
+            simroot_assert(0);
         }
         PageIndexT ret = valid_pages.front();
         valid_pages.pop_front();
@@ -44,7 +45,7 @@ public:
     inline void reuse(PageIndexT ppindex) {
         lock.lock();
         auto res = alloced_pages.find(ppindex);
-        assert(res != alloced_pages.end());
+        simroot_assert(res != alloced_pages.end());
         res->second ++;
         lock.unlock();
     }
@@ -53,7 +54,7 @@ public:
         bool ret = true;
         lock.lock();
         auto res = alloced_pages.find(ppindex);
-        assert(res != alloced_pages.end());
+        simroot_assert(res != alloced_pages.end());
         if(res->second <= 1) {
             alloced_pages.erase(res);
         }
@@ -157,7 +158,7 @@ public:
         for(VPageIndexT vpi = vpindex; vpi < vpindex + vpcnt; vpi++) {
             if(pgtable.find(vpi) != pgtable.end()) {
                 LOG(ERROR) << "Virt Addr Space Re-Allocated";
-                assert(0);
+                simroot_assert(0);
             }
             PageIndexT ppi = ppman->alloc();
             pgtable.emplace(vpi, PPageEntry{
@@ -209,7 +210,7 @@ public:
         VPageIndexT vpindex = top - vpcnt;
         if((vpindex << PAGE_ADDR_OFFSET) <= brk_va) {
             LOG(ERROR) << "Virt Addr Space Run out";
-            assert(0);
+            simroot_assert(0);
         }
         mmap_segments.emplace(iter,VAddrSeg{
                 .vpindex = vpindex, .vpcnt = vpcnt, .info = info

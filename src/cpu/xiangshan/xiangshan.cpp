@@ -1793,7 +1793,7 @@ void XiangShanCPU::_do_system_inst(XSInst *inst) {
             regs[RV_REG_CNT_INT + i] = freg.regfile[frnm.commited_table[i]];
         }
         VirtAddrT nextpc = inst->pc + ((inst->flag & RVINSTFLAG_RVC)?2:4);
-        inst->arg1 = ((inst->flag & RVINSTFLAG_ECALL)?(io_sys_port->syscall(cpu_id, inst->pc, regs)):(io_sys_port->ebreak(cpu_id, inst->pc, regs)));
+        inst->arg1 = ((inst->flag & RVINSTFLAG_ECALL)?(io_sys_port->ecall(cpu_id, inst->pc, regs)):(io_sys_port->ebreak(cpu_id, inst->pc, regs)));
         if(inst->arg1 != nextpc) {
             control.sys_redirect.valid = true;
             control.sys_redirect.data = inst;

@@ -287,6 +287,9 @@ void RVThread::elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs,
     raw_pgtable->mmap_segments.clear();
     raw_pgtable->dyn_lib_brk = MAX_MMAP_VADDR;
 
+    this->set_child_tid = this->clear_child_tid = this->robust_list_head = this->robust_list_len = 0;
+    this->do_child_cleartid = false;
+
     // 加载elf文件
     ELFIO::elfio reader;
     if(!reader.load(param.file_path)) {
@@ -684,7 +687,7 @@ void RVThread::sys_sigprocmask(uint32_t how, uint8_t *set, uint8_t *oldset, uint
         }
         else {
             LOG(ERROR) << "Unsupported args for syscall sigprocmask";
-            assert(0);
+            simroot_assert(0);
         }
     }
     if(oldset) {

@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <math.h>
 #include <assert.h>
 
@@ -21,7 +22,6 @@
 
 #include "spinlocks.h"
 #include "easylogging++.h"
-#include "huge_number.h"
 
 using std::vector;
 using std::list;
@@ -38,7 +38,16 @@ using std::make_shared;
 using std::make_unique;
 using std::make_pair;
 
-using dozerg::HugeNumber;
+
+static_assert(sizeof(uint64_t) == 8, "sizeof(uint64_t) == 8");
+static_assert(sizeof(int64_t) == 8, "sizeof(int64_t) == 8");
+static_assert(sizeof(uint32_t) == 4, "sizeof(uint32_t) == 4");
+static_assert(sizeof(int32_t) == 4, "sizeof(int32_t) == 4");
+static_assert(sizeof(uint16_t) == 2, "sizeof(uint16_t) == 2");
+static_assert(sizeof(int16_t) == 2, "sizeof(int16_t) == 2");
+static_assert(sizeof(uint8_t) == 1, "sizeof(uint8_t) == 1");
+static_assert(sizeof(int8_t) == 1, "sizeof(int8_t) == 1");
+
 
 typedef uint64_t RawDataT;
 typedef RawDataT IntDataT;

@@ -29,11 +29,11 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
         nodeid.insert(n);
     }
 
-    assert(port_ids.size() == port_to_node.size());
+    simroot_assert(port_ids.size() == port_to_node.size());
     for(uint32_t i = 0; i < port_ids.size(); i++) {
         port2node.emplace(port_ids[i], port_to_node[i]);
     }
-    assert(port2node.size() == port_ids.size());
+    simroot_assert(port2node.size() == port_ids.size());
 
     for(auto src : nodeid) {
         for(auto dst : nodeid) {

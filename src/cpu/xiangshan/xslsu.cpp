@@ -308,7 +308,7 @@ bool LSU::cur_commit_amo(XSInst *inst) {
         memcpy(cop->data.data(), &(inst->arg0), cop->len);
         cop->amo = inst->param.amo.op;
         cop->param = inst;
-        assert(io_dcache_port->amo_input->push(cop));
+        simroot_assert(io_dcache_port->amo_input->push(cop));
         amo_state = AMOState::cache_resp;
     }
     else if(amo_state == AMOState::cache_resp && io_dcache_port->amo_output->can_pop()) {
@@ -705,7 +705,7 @@ void LSU::_ld_reorder_check(XSInstID inst_id, PhysAddrT addr, uint32_t len, SimE
             p2->rsready[2] = false;
             ld_refire_queue.push_back(p2);
             iter = apl_ld_finish.erase(iter);
-            assert(ldq_total_size);
+            simroot_assert(ldq_total_size);
             ldq_total_size--;
         }
     }
@@ -882,10 +882,10 @@ void LSU::_cur_write_commited_store() {
     while(io_dcache_port->st_output->can_pop()) {
         CacheOP *cop = io_dcache_port->st_output->top();
         io_dcache_port->st_output->pop();
-        assert(commited_store_buf_indexing_cnt > 0);
+        simroot_assert(commited_store_buf_indexing_cnt > 0);
         commited_store_buf_indexing_cnt--;
         LineIndexT lindex = (cop->addr >> CACHE_LINE_ADDR_OFFSET);
-        assert(cop->len == CACHE_LINE_LEN_BYTE);
+        simroot_assert(cop->len == CACHE_LINE_LEN_BYTE);
         SimError res = cop->err;
         XSInstID last_inst_id = (XSInstID)(cop->param);
         if(res == SimError::busy || res == SimError::coherence || res == SimError::miss) {

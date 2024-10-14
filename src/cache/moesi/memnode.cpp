@@ -90,7 +90,7 @@ void MemoryNode::on_current_tick() {
 
     for(auto iter = membufs.begin(); iter != membufs.end(); iter++) {
         if(iter->processed >= CACHE_LINE_LEN_BYTE) {
-            assert(!(iter->op));
+            simroot_assert(!(iter->op));
             CacheCohenrenceMsg send;
             send.line = iter->lindex;
             send.arg = 0;
@@ -100,7 +100,7 @@ void MemoryNode::on_current_tick() {
             cache_line_copy(send.data.data(), iter->linebuf);
             vector<uint8_t> buf;
             construct_msg_pack(send, buf);
-            assert(bus->send(my_port, iter->src_port, CHANNEL_RESP, buf));
+            simroot_assert(bus->send(my_port, iter->src_port, CHANNEL_RESP, buf));
             membufs.erase(iter);
             break;
         }

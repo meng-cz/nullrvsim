@@ -66,8 +66,16 @@ public:
         global_freq = conf::get_int("root", "global_freq_mhz", 1000) * 1000000UL;
         wall_time_freq = conf::get_int("root", "wall_time_freq_mhz", 1000) * 1000000UL;
         start_time_us = get_current_time_us();
+
+        std::string log_dir = conf::get_str("root", "out_dir", "out");
+        std::filesystem::create_directories(log_dir);
+        stdout_logfile = std::ofstream(log_dir + "/stdout.txt", std::ios::out);
+        stderr_logfile = std::ofstream(log_dir + "/stderr.txt", std::ios::out);
+            
     };
     ~SimRoot() {
+        stdout_logfile.close();
+        stderr_logfile.close();
         delete[] tasks;
         delete[] ths;
     }
@@ -95,6 +103,9 @@ public:
     uint64_t last_1mtick_real_time_interval_us = 0;
 
     std::set<LogFile*> logfiles;
+
+    std::ofstream stdout_logfile;
+    std::ofstream stderr_logfile;
 };
 
 SimRoot *root = nullptr;
@@ -324,6 +335,16 @@ void destroy_log_file(LogFileT fd) {
     LogFile *p = (LogFile *)fd;
     root->logfiles.erase(p);
     log_file_close(p);
+}
+
+void log_stdout(const char *buf, uint64_t sz) {
+    root->stdout_logfile.write(buf, sz);
+    root->stdout_logfile.flush();
+}
+
+void log_stderr(const char *buf, uint64_t sz) {
+    root->stderr_logfile.write(buf, sz);
+    root->stderr_logfile.flush();
 }
 
 

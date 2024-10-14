@@ -32,6 +32,10 @@ void PipeLine5CPU::init_all() {
         sprintf(log_buf, "CPU%d_log.txt", cpu_id);
         log_file_commited_inst = new std::ofstream(log_buf);
     }
+    if(conf::get_int("pipeline5", "log_ldst_to_file", 0)) {
+        sprintf(log_buf, "CPU%d_ldst.txt", cpu_id);
+        log_file_ldst = new std::ofstream(log_buf);
+    }
 
     clear_pipeline();
 }
@@ -40,6 +44,10 @@ PipeLine5CPU::~PipeLine5CPU() {
     if(log_file_commited_inst) {
         log_file_commited_inst->close();
         delete log_file_commited_inst;
+    }
+    if(log_file_ldst) {
+        log_file_ldst->close();
+        delete log_file_ldst;
     }
 }
 
@@ -123,7 +131,7 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
             }
         }
         else if(isa::pdec_isifence(inst.inst_raw)) {
-            assert(0);
+            simroot_assert(0);
             p1_apply_next_pc = pc + 4;
         }
         else {
@@ -256,7 +264,7 @@ void PipeLine5CPU::process_pipeline_3_execute() {
     else if(inst.opcode == RV64OPCode::branch) {
         if(iregs.blocked(rs1) || iregs.blocked(rs2)) return;
         p5inst.arg1 = inst.pc + RAW_DATA_AS(inst.imm).i64;
-        assert(SimError::success == isa::perform_branch_op_64(inst.param.branch, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
+        simroot_assert(SimError::success == isa::perform_branch_op_64(inst.param.branch, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
     }
     else if(inst.opcode == RV64OPCode::amo) {
         if(iregs.blocked(rs1)) return;
@@ -282,27 +290,27 @@ void PipeLine5CPU::process_pipeline_3_execute() {
     }
     else if(inst.opcode == RV64OPCode::opimm) {
         if(iregs.blocked(rs1)) return;
-        assert(SimError::success == isa::perform_int_op_64(inst.param.intop, &p5inst.arg0, iregs.get(rs1), inst.imm));
+        simroot_assert(SimError::success == isa::perform_int_op_64(inst.param.intop, &p5inst.arg0, iregs.get(rs1), inst.imm));
         iregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::opimm32) {
         if(iregs.blocked(rs1)) return;
-        assert(SimError::success == isa::perform_int_op_32(inst.param.intop, &p5inst.arg0, iregs.get(rs1), inst.imm));
+        simroot_assert(SimError::success == isa::perform_int_op_32(inst.param.intop, &p5inst.arg0, iregs.get(rs1), inst.imm));
         iregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::op) {
         if(iregs.blocked(rs1) || iregs.blocked(rs2)) return;
-        assert(SimError::success == isa::perform_int_op_64(inst.param.intop, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
+        simroot_assert(SimError::success == isa::perform_int_op_64(inst.param.intop, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
         iregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::op32) {
         if(iregs.blocked(rs1) || iregs.blocked(rs2)) return;
-        assert(SimError::success == isa::perform_int_op_32(inst.param.intop, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
+        simroot_assert(SimError::success == isa::perform_int_op_32(inst.param.intop, &p5inst.arg0, iregs.get(rs1), iregs.get(rs2)));
         iregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::madd || inst.opcode == RV64OPCode::msub || inst.opcode == RV64OPCode::nmsub || inst.opcode == RV64OPCode::nmadd) {
         if(fregs.blocked(rs1) || fregs.blocked(rs2) || fregs.blocked(rs3)) return;
-        assert(SimError::success == isa::perform_fmadd_op(inst.opcode, inst.param.fp.fwid, &p5inst.arg0, fregs.get(rs1), fregs.get(rs2), fregs.get(rs3), &csr_fcsr));
+        simroot_assert(SimError::success == isa::perform_fmadd_op(inst.opcode, inst.param.fp.fwid, &p5inst.arg0, fregs.get(rs1), fregs.get(rs2), fregs.get(rs3), &csr_fcsr));
         fregs.block(rd1);
     }
     else if(inst.opcode == RV64OPCode::opfp) {
@@ -329,7 +337,7 @@ void PipeLine5CPU::process_pipeline_3_execute() {
                 s1 = iregs.get(rs1);
                 break;
         }
-        assert(SimError::success == isa::perform_fp_op(inst.param.fp, &p5inst.arg0, s1, fregs.get(rs2), &csr_fcsr));
+        simroot_assert(SimError::success == isa::perform_fp_op(inst.param.fp, &p5inst.arg0, s1, fregs.get(rs2), &csr_fcsr));
         if(isa::rv64_fpop_is_i_rd(inst.param.fp.op)) {
             iregs.block(rd1);
         }
@@ -366,12 +374,12 @@ void PipeLine5CPU::process_pipeline_4_memory() {
 
     if(inst.opcode == RV64OPCode::amo && inst.param.amo.op == isa::RV64AMOOP5::SC) {
         VirtAddrT vaddr = p5inst.vaddr;
+        PhysAddrT paddr = vaddr;
         uint64_t data = iregs.getu(inst.rs2);
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
             io_sys_port->dev_output(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &data);
         }
         else {
-            PhysAddrT paddr = 0;
             SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
@@ -394,14 +402,20 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
             dcache_prefetch(vaddr);
         }
+        if(log_file_ldst) {
+            sprintf(log_buf, "%ld: SC @0x%lx Vaddr:0x%lx Paddr:0x%lx Value:0x%lx Ret:0x%lx\n", simroot::get_current_tick(),
+                inst.pc, vaddr, paddr, data, p5inst.arg0
+            );
+            log_file_ldst->write(log_buf, strlen(log_buf));
+        }
     }
     else if(inst.opcode == RV64OPCode::amo && inst.param.amo.op == isa::RV64AMOOP5::LR) {
         VirtAddrT vaddr = p5inst.vaddr;
+        PhysAddrT paddr = vaddr;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
             io_sys_port->dev_input(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &(p5inst.arg0));
         }
         else {
-            PhysAddrT paddr = 0;
             SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
@@ -429,11 +443,17 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             dcache_prefetch(vaddr);
             RAW_DATA_AS(p5inst.arg0).i64 = data;
         }
+        if(log_file_ldst) {
+            sprintf(log_buf, "%ld: LR @0x%lx Vaddr:0x%lx Paddr:0x%lx Value:0x%lx\n", simroot::get_current_tick(),
+                inst.pc, vaddr, paddr, p5inst.arg0
+            );
+            log_file_ldst->write(log_buf, strlen(log_buf));
+        }
     }
     else if(inst.opcode == RV64OPCode::amo) {
         VirtAddrT vaddr = p5inst.vaddr;
         PhysAddrT paddr = 0;
-        IntDataT previous;
+        IntDataT previous = 0;
         IntDataT value = iregs.get(inst.rs2);
         IntDataT stvalue = 0;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
@@ -470,7 +490,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 p5inst.cache_missed = true;
                 return;
             }
-            assert(SimError::success == isa::perform_amo_op(inst.param.amo, &stvalue, previous, value));
+            simroot_assert(SimError::success == isa::perform_amo_op(inst.param.amo, &stvalue, previous, value));
             res = io_dcache_port->store(paddr, len, &stvalue, false);
             cache_operation_result_check_error(res, inst.pc, vaddr, paddr, len);
             if(res != SimError::success) {
@@ -479,10 +499,30 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
             dcache_prefetch(vaddr);
         }
+        if(log_file_ldst) {
+            string amo_op_name;
+            switch (inst.param.amo.op)
+            {
+            case RV64AMOOP5::ADD : amo_op_name = "AMOADD"; break;
+            case RV64AMOOP5::SWAP: amo_op_name = "AMOSWAP"; break;
+            case RV64AMOOP5::XOR : amo_op_name = "AMOXOR"; break;
+            case RV64AMOOP5::AND : amo_op_name = "AMOAND"; break;
+            case RV64AMOOP5::OR  : amo_op_name = "AMOOR"; break;
+            case RV64AMOOP5::MIN : amo_op_name = "AMOMIN"; break;
+            case RV64AMOOP5::MAX : amo_op_name = "AMOMAX"; break;
+            case RV64AMOOP5::MINU: amo_op_name = "AMOMINU"; break;
+            case RV64AMOOP5::MAXU: amo_op_name = "AMOMAXU"; break;
+            }
+            sprintf(log_buf, "%ld: %s @0x%lx Vaddr:0x%lx Paddr:0x%lx Value:0x%lx Prevalue:0x%lx Stvalue:0x%lx\n", simroot::get_current_tick(),
+                amo_op_name.c_str(), inst.pc, vaddr, paddr, iregs.get(inst.rs2), previous, stvalue
+            );
+            log_file_ldst->write(log_buf, strlen(log_buf));
+        }
         p5inst.arg0 = previous;
     }
     else if(inst.opcode == RV64OPCode::load || inst.opcode == RV64OPCode::loadfp) {
         VirtAddrT vaddr = p5inst.vaddr;
+        PhysAddrT paddr = vaddr;
         uint32_t len = isa::rv64_ls_width_to_length(inst.param.loadstore);
         uint64_t buf = 0;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
@@ -491,9 +531,9 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 sprintf(log_buf, "CPU%d Load from dev_mem 0x%lx: 0x%lx", cpu_id, vaddr, buf);
                 simroot::print_log_info(log_buf);
             }
+            
         }
         else {
-            PhysAddrT paddr = 0;
             SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R);
             if(res != SimError::success) {
                 p5inst.err = res;
@@ -514,6 +554,12 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
             dcache_prefetch(vaddr);
         }
+        if(log_file_ldst) {
+            sprintf(log_buf, "%ld: LD @0x%lx Vaddr:0x%lx Paddr:0x%lx Value:0x%lx\n", simroot::get_current_tick(),
+                inst.pc, vaddr, paddr, buf
+            );
+            log_file_ldst->write(log_buf, strlen(log_buf));
+        }
         switch (inst.param.loadstore)
         {
         case isa::RV64LSWidth::byte : RAW_DATA_AS(p5inst.arg0).i64 = *((int8_t*)(&buf)); break;
@@ -523,11 +569,12 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         case isa::RV64LSWidth::ubyte: p5inst.arg0 = *((uint8_t*)(&buf)); break;
         case isa::RV64LSWidth::uharf: p5inst.arg0 = *((uint16_t*)(&buf)); break;
         case isa::RV64LSWidth::uword: p5inst.arg0 = *((uint32_t*)(&buf)); break;
-        default: assert(0);
+        default: simroot_assert(0);
         }
     }
     else if(inst.opcode == RV64OPCode::store || inst.opcode == RV64OPCode::storefp) {
         VirtAddrT vaddr = p5inst.vaddr;
+        PhysAddrT paddr = vaddr;
         uint32_t len = isa::rv64_ls_width_to_length(inst.param.loadstore);
         uint64_t buf = p5inst.arg1;
         if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
@@ -538,7 +585,6 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
         }
         else {
-            PhysAddrT paddr = 0;
             SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
@@ -557,6 +603,12 @@ void PipeLine5CPU::process_pipeline_4_memory() {
                 simroot::print_log_info(log_buf);
             }
             dcache_prefetch(vaddr);
+        }
+        if(log_file_ldst) {
+            sprintf(log_buf, "%ld: ST @0x%lx Vaddr:0x%lx Paddr:0x%lx Value:0x%lx\n", simroot::get_current_tick(),
+                inst.pc, vaddr, paddr, buf
+            );
+            log_file_ldst->write(log_buf, strlen(log_buf));
         }
     }
     // Todo
@@ -674,7 +726,7 @@ void PipeLine5CPU::process_pipeline_5_commit() {
         for(int i = 0; i < RV_REG_CNT_FP; i++) {
             regs[RV_REG_CNT_INT + i] = fregs.getb(i);
         }
-        pc_redirect = io_sys_port->syscall(cpu_id, inst.pc, regs);
+        pc_redirect = io_sys_port->ecall(cpu_id, inst.pc, regs);
         apply_pc_redirect = true;
         for(int i = 0; i < RV_REG_CNT_INT; i++) {
             iregs.setu(i, regs[i]);

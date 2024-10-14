@@ -752,7 +752,7 @@ void PrivL1L2Moesi::p2_index() {
                     {
                     case CC_SHARED: mshr->state = MSHR_STOM; break;
                     case CC_OWNED : mshr->state = MSHR_OTOM; break;
-                    default: assert(0);
+                    default: simroot_assert(0);
                     }
                     block->remove_line(lindex);
                 }
@@ -849,6 +849,9 @@ void PrivL1L2Moesi::handle_new_line_nolock(LineIndexT lindex, MSHREntry *mshr, u
             replacedline.state = CC_MODIFIED;
         }
         l1d_block->remove_line(replaced);
+        if(reserved_address_valid && replaced == addr_to_line_index(reserved_address)) {
+            reserved_address_valid = false;
+        }
         l1d_busy_cycle++;
     }
 
@@ -876,7 +879,7 @@ void PrivL1L2Moesi::handle_new_line_nolock(LineIndexT lindex, MSHREntry *mshr, u
         push_send_buf_with_line(hn_port, CHANNEL_REQ, MSG_PUTO, replaced, my_port_id, replacedline.data, (trace?(trace->alloc_trans_id()):0));
         break;
     default:
-        assert(0);
+        simroot_assert(0);
     }
 
 }
@@ -960,6 +963,10 @@ void PrivL1L2Moesi::insert_to_l1d(LineIndexT lindex, void * line_buf, bool writa
         simroot::print_log_info(str);
     }
 
+    if(reserved_address_valid && replaced == addr_to_line_index(reserved_address)) {
+        reserved_address_valid = false;
+    }
+
     TagedCacheLine *pline = nullptr;
     MSHREntry *mshr = nullptr;
 
@@ -990,6 +997,9 @@ void PrivL1L2Moesi::snoop_l1d_and_set_readonly(LineIndexT lindex, void * l2_line
         pline->flag &= (~L1FLG_WRITE);
     }
     l1d_busy_cycle ++;
+    if(reserved_address_valid && lindex == addr_to_line_index(reserved_address)) {
+        reserved_address_valid = false;
+    }
 }
 
 void PrivL1L2Moesi::snoop_l1_and_invalid(LineIndexT lindex, void * l2_line_buf) {
@@ -1001,6 +1011,9 @@ void PrivL1L2Moesi::snoop_l1_and_invalid(LineIndexT lindex, void * l2_line_buf) 
     }
     l1d_busy_cycle ++;
     l1i_busy_cycle ++;
+    if(reserved_address_valid && lindex == addr_to_line_index(reserved_address)) {
+        reserved_address_valid = false;
+    }
 }
 
 void PrivL1L2Moesi::main_on_current_tick() {

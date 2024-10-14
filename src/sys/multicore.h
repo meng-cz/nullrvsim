@@ -13,6 +13,9 @@
 #include "syscallmem.h"
 #include "pagemmap.h"
 
+#include <sys/uio.h>
+#include <sys/socket.h>
+
 using simcpu::CPUInterface;
 using simcpu::CPUSystemInterface;
 
@@ -36,7 +39,7 @@ public:
     virtual bool dev_input(uint32_t cpu_id, VirtAddrT addr, uint32_t len, void *buf);
     virtual bool dev_output(uint32_t cpu_id, VirtAddrT addr, uint32_t len, void *buf);
     virtual bool dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, RV64AMOOP5 amo, void *src, void *dst);
-    virtual VirtAddrT syscall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs);
+    virtual VirtAddrT ecall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs);
     virtual VirtAddrT ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs);
     virtual VirtAddrT exception(uint32_t cpu_id, VirtAddrT pc, SimError expno, uint64_t arg1, uint64_t arg2, RVRegArray &regs);
 
@@ -102,16 +105,99 @@ protected:
     std::unordered_map<RVThread *, DMAWaitThread> dma_wait_threads;
 
     typedef struct {
-        RVThread *      thread = nullptr;
-        uint8_t *       host_fds = nullptr;
-        uint64_t        nfds = 0;
-        int64_t        timeout_us = 0;
         SimSystemMultiCore * sys = nullptr;
         uint32_t        cpuid = 0;
         pthread_t       th;
+        RVThread *      thread = nullptr;
+        uint8_t *       host_fds = nullptr;
+        uint64_t        nfds = 0;
+        int64_t         timeout_us = 0;
     } PollWaitThread;
     std::unordered_map<RVThread *, PollWaitThread> poll_wait_threads;
     static void * poll_wait_thread_function(void * param);
+
+    typedef struct {
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+        RVThread *      thread = nullptr;
+        fd_set *        readfds = nullptr;
+        fd_set *        writefds = nullptr;
+        fd_set *        exceptfds = nullptr;
+        fd_set          host_readfds;
+        fd_set          host_writefds;
+        fd_set          host_exceptfds;
+        unordered_map<int, int> hostfd_to_simfd;
+        int32_t         nfds = 0;
+        int32_t         host_nfds = 0;
+        int64_t         timeout_us = 0;
+    } SelectWaitThread;
+    std::unordered_map<RVThread *, SelectWaitThread> select_wait_threads;
+    static void * select_wait_thread_function(void * param);
+
+    typedef struct {
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+        RVThread *      thread = nullptr;
+        struct timespec host_time;
+    } SleepWaitThread;
+    std::unordered_map<RVThread *, SleepWaitThread> sleep_wait_threads;
+    static void * sleep_wait_thread_function(void * param);
+
+    typedef struct {
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+        RVThread *      thread = nullptr;
+        int32_t         simfd = 0;
+        int32_t         hostfd = 0;
+        uint8_t *       buf = nullptr;
+        uint64_t        bufsz = 0;
+    } BlockreadWaitThread;
+    std::unordered_map<RVThread *, BlockreadWaitThread> blkread_wait_threads;
+    static void * blkread_wait_thread_function(void * param);
+
+    typedef struct {
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+        RVThread *      thread = nullptr;
+        int32_t         simfd = 0;
+        int32_t         hostfd = 0;
+        uint32_t        flags = 0;
+        uint8_t *       buf = nullptr;
+        uint64_t        bufsz = 0;
+        uint8_t *       dest_addr = nullptr;
+        uint64_t        addrlen = 0;
+    } SockSendWaitThread;
+    std::unordered_map<RVThread *, SockSendWaitThread> socksend_wait_threads;
+    static void * socksend_wait_thread_function(void * param);
+
+    typedef struct {
+        SimSystemMultiCore * sys = nullptr;
+        uint32_t        cpuid = 0;
+        pthread_t       th;
+        RVThread *      thread = nullptr;
+        int32_t         simfd = 0;
+        int32_t         hostfd = 0;
+        uint32_t        flags = 0;
+        struct msghdr   msg;
+        vector<struct iovec> iovecs;
+        struct msghdr  *hbuf_msg = nullptr;
+    } SockRecvWaitThread;
+    std::unordered_map<RVThread *, SockRecvWaitThread> sockrecv_wait_threads;
+    static void * sockrecv_wait_thread_function(void * param);
+
+    inline void cancle_wait_thread_nolock(RVThread *thread) {
+        dma_wait_threads.erase(thread);
+        poll_wait_threads.erase(thread);
+        select_wait_threads.erase(thread);
+        sleep_wait_threads.erase(thread);
+        blkread_wait_threads.erase(thread);
+        socksend_wait_threads.erase(thread);
+        sockrecv_wait_threads.erase(thread);
+    }
 
     std::list<RVThread*> ready_threads;
     std::set<RVThread*> waiting_threads;
@@ -136,6 +222,10 @@ protected:
     SyscallMemory *syscall_memory = nullptr;
     SpinLock syscall_memory_amo_lock; //同时只能有一个对系统内存的amo操作
 
+    vector<string> def_ldpaths;
+    uint64_t def_stacksz = 0;
+    string def_syscall_proxy_path;
+
     char log_buf[512];
     bool log_info = false;
     bool log_syscall = false;
@@ -152,7 +242,10 @@ protected:
     MP_SYSCALL_CLAIM(94, exitgroup);
     MP_SYSCALL_CLAIM(96, set_tid_address);
     MP_SYSCALL_CLAIM(99, set_robust_list);
+    MP_SYSCALL_CLAIM(122, sched_setaffinity); // Un-used
+    MP_SYSCALL_CLAIM(123, sched_getaffinity); // Un-used
     MP_SYSCALL_CLAIM(124, sched_yield);
+    MP_SYSCALL_CLAIM(131, tgkill);
     MP_SYSCALL_CLAIM(172, getpid);
     MP_SYSCALL_CLAIM(173, getppid);
     MP_SYSCALL_CLAIM(174, getuid);
@@ -161,6 +254,7 @@ protected:
     MP_SYSCALL_CLAIM(177, getegid);
     MP_SYSCALL_CLAIM(178, gettid);
     MP_SYSCALL_CLAIM(198, socket);
+    MP_SYSCALL_CLAIM(201, listen);
     MP_SYSCALL_CLAIM(214, brk);
     MP_SYSCALL_CLAIM(215, munmap);
     MP_SYSCALL_CLAIM(222, mmap);
@@ -178,8 +272,10 @@ protected:
     MP_SYSCALL_CLAIM(1048, host_faccessat);
     MP_SYSCALL_CLAIM(1056, host_openat);
     MP_SYSCALL_CLAIM(1059, host_pipe2);
+    MP_SYSCALL_CLAIM(1061, host_getdents);
     MP_SYSCALL_CLAIM(1063, host_read);
     MP_SYSCALL_CLAIM(1064, host_write);
+    MP_SYSCALL_CLAIM(1072, host_pselect6);
     MP_SYSCALL_CLAIM(1073, host_ppoll);
     MP_SYSCALL_CLAIM(1078, host_readlinkat);
     MP_SYSCALL_CLAIM(1079, host_newfstatat);
@@ -187,15 +283,23 @@ protected:
     MP_SYSCALL_CLAIM(1093, host_exit);
     MP_SYSCALL_CLAIM(1098, host_futex);
     MP_SYSCALL_CLAIM(1113, host_clock_gettime);
+    MP_SYSCALL_CLAIM(1115, host_clock_nanosleep);
     MP_SYSCALL_CLAIM(1134, host_sigaction);
     MP_SYSCALL_CLAIM(1135, host_sigprocmask);
     MP_SYSCALL_CLAIM(1199, host_socketpair);
+    MP_SYSCALL_CLAIM(1200, host_bind);
     MP_SYSCALL_CLAIM(1203, host_connect);
+    MP_SYSCALL_CLAIM(1204, host_getsockname);
+    MP_SYSCALL_CLAIM(1206, host_sendto);
     MP_SYSCALL_CLAIM(1208, host_setsockopt);
+    MP_SYSCALL_CLAIM(1209, host_getsockopt);
+    MP_SYSCALL_CLAIM(1212, host_recvmsg);
     MP_SYSCALL_CLAIM(1220, host_clone);
+    MP_SYSCALL_CLAIM(1221, host_execve);
     MP_SYSCALL_CLAIM(1261, host_prlimit);
     MP_SYSCALL_CLAIM(1278, host_getrandom);
     MP_SYSCALL_CLAIM(1435, host_clone3);
+    MP_SYSCALL_CLAIM(1439, host_faccessat2);
 
 };
 

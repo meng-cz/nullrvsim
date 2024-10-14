@@ -817,7 +817,7 @@ char* FregNameList[32] = {
     (char*)" ft6",   // x6
     (char*)" ft7",   // x7
     (char*)" fs0",   // x8
-    (char*)" fs0",   // x9
+    (char*)" fs1",   // x9
     (char*)" fa0",   // x10
     (char*)" fa1",   // x11
     (char*)" fa2",   // x12

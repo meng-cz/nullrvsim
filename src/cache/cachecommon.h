@@ -69,7 +69,7 @@ public:
             ret = true;
             if(replaced) *replaced = lru.back();
             PayloadT *tmp = nullptr;
-            assert(get_line(lru.back(), &tmp, false));
+            simroot_assert(get_line(lru.back(), &tmp, false));
             if(replaced_buf) *replaced_buf = *tmp;
             remove_line(lru.back());
             set.insert(std::make_pair(lindex, *buf));

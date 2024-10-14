@@ -41,6 +41,8 @@ void log_line(LogFileT fd, const char* cstr);
 
 void destroy_log_file(LogFileT fd);
 
+void log_stdout(const char *buf, uint64_t sz);
+void log_stderr(const char *buf, uint64_t sz);
 
 // --------- 周期与时间管理 ------------
 

@@ -96,7 +96,7 @@ public:
     };
 
     void ifence() {
-        assert(0);
+        simroot_assert(0);
     };
 
     virtual void on_current_tick();
@@ -254,6 +254,7 @@ protected:
     bool log_fregs = false;
     char log_buf[256];
     std::ofstream *log_file_commited_inst = nullptr;
+    std::ofstream *log_file_ldst = nullptr;
 
     inline void dcache_prefetch(VirtAddrT vaddr) {
         

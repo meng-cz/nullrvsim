@@ -88,7 +88,7 @@ void LLCMoesiDirNoi::p1_fetch() {
         topush->transid = iter->transid;
         topush->index_cycle = this->index_cycle;
         if(iter->data.size() > 0) {
-            assert(iter->data.size() == CACHE_LINE_LEN_BYTE);
+            simroot_assert(iter->data.size() == CACHE_LINE_LEN_BYTE);
             cache_line_copy(topush->line_buf, iter->data.data());
         }
         queue_index.push(topush);
@@ -148,7 +148,7 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_reqnode_index(src_port, &l1_index));
+        simroot_assert(busmap->get_reqnode_index(src_port, &l1_index));
         
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
@@ -196,7 +196,7 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_reqnode_index(src_port, &l1_index));
+        simroot_assert(busmap->get_reqnode_index(src_port, &l1_index));
         
         if(!(pak->dir_hit) && !(pak->blk_hit)) {
             // LLC miss
@@ -258,7 +258,7 @@ void LLCMoesiDirNoi::p2_index() {
         
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_reqnode_index(src_port, &l1_index));
+        simroot_assert(busmap->get_reqnode_index(src_port, &l1_index));
 
         DirEntry *pentry = nullptr;
         pak->dir_hit = directory->get_line(lindex_to_nuca_tag(pak->lindex), &pentry, false);
@@ -284,7 +284,7 @@ void LLCMoesiDirNoi::p2_index() {
 
         uint32_t l1_index = 0;
         BusPortT src_port = pak->arg;
-        assert(busmap->get_reqnode_index(src_port, &l1_index));
+        simroot_assert(busmap->get_reqnode_index(src_port, &l1_index));
 
         if(pak->entry.owner == l1_index) {
             CacheLineT new_line, replaced_line;
@@ -318,7 +318,7 @@ void LLCMoesiDirNoi::p2_index() {
         pak->dir_evict = (pak->entry.exists.empty());
     }
     else {
-        assert(0);
+        simroot_assert(0);
     }
 }
 

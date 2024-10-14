@@ -172,7 +172,7 @@ SimError L1CacheMoesiDirNoiV2::store(PhysAddrT paddr, uint32_t len, void *buf, v
             {
             case CC_SHARED: mshr->state = MSHR_STOM; break;
             case CC_OWNED : mshr->state = MSHR_OTOM; break;
-            default: assert(0);
+            default: simroot_assert(0);
             }
             block->remove_line(lindex);
         }
@@ -272,7 +272,7 @@ void L1CacheMoesiDirNoiV2::handle_received_msg_nolock() {
     uint32_t arg = msgbuf.arg;
 
     BusPortT l2_port = 0;
-    assert(busmap->get_homenode_port(lindex, &l2_port));
+    simroot_assert(busmap->get_homenode_port(lindex, &l2_port));
 
     if(msgbuf.type == MSG_INVALID) {
         if(send_buf.size() + 1 > send_buf_size) return;
@@ -507,7 +507,7 @@ void L1CacheMoesiDirNoiV2::handle_new_line_nolock(LineIndexT lindex, MSHREntry *
     }
 
     BusPortT l2_port = 0;
-    assert(busmap->get_homenode_port(lindex, &l2_port));
+    simroot_assert(busmap->get_homenode_port(lindex, &l2_port));
 
     newlines.emplace_back();
     newlines.back().lindex = lindex;
@@ -532,10 +532,10 @@ void L1CacheMoesiDirNoiV2::handle_new_line_nolock(LineIndexT lindex, MSHREntry *
     }
 
     mshrs->remove(lindex);
-    assert(mshr = mshrs->alloc(replaced));
+    simroot_assert(mshr = mshrs->alloc(replaced));
     memcpy(mshr->line_buf, replacedline.data, CACHE_LINE_LEN_BYTE);
 
-    assert(busmap->get_homenode_port(replaced, &l2_port));
+    simroot_assert(busmap->get_homenode_port(replaced, &l2_port));
 
     switch (replacedline.state)
     {
@@ -556,7 +556,7 @@ void L1CacheMoesiDirNoiV2::handle_new_line_nolock(LineIndexT lindex, MSHREntry *
         push_send_buf_with_line(l2_port, CHANNEL_REQ, MSG_PUTO, replaced, my_port_id, replacedline.data);
         break;
     default:
-        assert(0);
+        simroot_assert(0);
     }
 
     return ;
@@ -576,7 +576,7 @@ void L1CacheMoesiDirNoiV2::on_current_tick() {
     }
     while(misc_input->can_pop()) {
         misc_input->top()->err = SimError::success;
-        assert(misc_input->pass_to(*misc_output));
+        simroot_assert(misc_input->pass_to(*misc_output));
     }
 
     recieve_msg_nolock();
@@ -588,17 +588,17 @@ void L1CacheMoesiDirNoiV2::on_current_tick() {
         if(st_input->can_pop()) {
             CacheOP *op = st_input->top();
             op->err = store(op->addr, op->len, op->data.data(), op->valid);
-            assert(st_input->pass_to(st_queues[1]));
+            simroot_assert(st_input->pass_to(st_queues[1]));
         }
         else if(ld_input->can_pop()) {
             CacheOP *op = ld_input->top();
             op->err = load(op->addr, op->len, op->data.data(), op->valid);
-            assert(ld_input->pass_to(ld_queues[1]));
+            simroot_assert(ld_input->pass_to(ld_queues[1]));
         }
         else if(amo_input->can_pop()) {
             CacheOP *op = amo_input->top();
             op->err = amo(op->addr, op->len, op->data.data(), op->amo);
-            assert(amo_input->pass_to(amo_queues[1]));
+            simroot_assert(amo_input->pass_to(amo_queues[1]));
         }
         else {
             break;
