@@ -1441,10 +1441,10 @@ void XiangShanCPU::cur_mem_disp2() {
             simroot_assert(rs_sta->push_next_tick(inst));
             simroot_assert(rs_std->push_next_tick(inst));
         }
-        else if(opcode == RV64OPCode::amo) [[unlikely]] {
+        else if(opcode == RV64OPCode::amo) {
             simroot_assert(rs_amo->push_next_tick(inst));
         }
-        else if(opcode == RV64OPCode::miscmem) [[unlikely]] {
+        else if(opcode == RV64OPCode::miscmem) {
             simroot_assert(rs_fence->push_next_tick(inst));
         }
         else [[unlikely]] {
@@ -1936,6 +1936,7 @@ uint32_t XiangShanCPU::_get_exu_latency(XSInst *inst) {
         LOG(ERROR) << "Unknown OPCODE in Generic EXU: " << (int)opcode;
         simroot_assert(0);
     }
+    return 1;
 }
 
 

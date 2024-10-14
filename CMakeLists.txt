@@ -4,8 +4,15 @@ cmake_minimum_required(VERSION 3.00)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_compile_options(-g -O2)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+if (NOT DEFINED CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE "Debug")
+endif()
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(CMAKE_CXX_FLAGS "-std=c++17 -O3 -DNDEBUG")
+else ()
+        set(CMAKE_CXX_FLAGS "-std=c++17 -g -O2")
+endif ()
 
 include_directories(
         src

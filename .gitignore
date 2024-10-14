@@ -33,3 +33,8 @@
 
 # VSCode
 .vscode
+
+build
+release
+debug
+

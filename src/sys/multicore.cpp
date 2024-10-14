@@ -401,6 +401,7 @@ VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError 
         LOG(ERROR)<<(log_bufs[cpu_id].data());
         simroot_assert(0);
     }
+    return pc;
 }
 
 void SimSystemMultiCore::dma_complete_callback(uint64_t callbackid) {
@@ -1001,6 +1002,7 @@ MP_SYSCALL_DEFINE(222, mmap) {
             cpu_id, vaddr, length, prot, flags, fd, offset);
         simroot_assert(0);
     }
+    return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(226, mprotect) {
@@ -1210,6 +1212,7 @@ MP_SYSCALL_DEFINE(1063, host_read) {
     
     CPUERROR("CPU %d Failed to read fd %d->%d", cpu_id, simfd, hostfd);
     simroot_assert(0);
+    return pc + 4;
 }
 
 MP_SYSCALL_DEFINE(1064, host_write) {

@@ -28,6 +28,7 @@ public:
     virtual bool dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, RV64AMOOP5 amo, void *src, void *dst) {
         LOG(ERROR) << "Not support AMO operation on device memory";
         assert(0);
+        return false;
     }
 
     virtual VirtAddrT ecall(uint32_t cpu_id, VirtAddrT pc, RVRegArray &regs) = 0;
