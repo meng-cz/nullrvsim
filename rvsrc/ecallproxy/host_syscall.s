@@ -31,3 +31,10 @@ _host_syscall_5:
     mv  a7,a5
     ecall 
     ret 
+
+.global _host_syscall_6
+_host_syscall_6:
+    mv  a7,a6
+    ecall 
+    ret 
+

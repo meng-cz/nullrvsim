@@ -4,19 +4,31 @@
 #include "fcntl_cmd.h"
 #include "memops.h"
 
+_Static_assert(sizeof(uint64_t) == 8, "sizeof(uint64_t) == 8");
+_Static_assert(sizeof(int64_t) == 8, "sizeof(int64_t) == 8");
+_Static_assert(sizeof(uint32_t) == 4, "sizeof(uint32_t) == 4");
+_Static_assert(sizeof(int32_t) == 4, "sizeof(int32_t) == 4");
+_Static_assert(sizeof(uint16_t) == 2, "sizeof(uint16_t) == 2");
+_Static_assert(sizeof(int16_t) == 2, "sizeof(int16_t) == 2");
+_Static_assert(sizeof(uint8_t) == 1, "sizeof(uint8_t) == 1");
+_Static_assert(sizeof(int8_t) == 1, "sizeof(int8_t) == 1");
+
 // void _rv64memcpy(void *dst, void *src, uint64_t sz) {
 //     for(uint64_t i = 0; i < sz; i++) {
 //         ((uint8_t*)dst)[i] = ((uint8_t*)src)[i];
 //     }
 // }
 
-static void _simple_strcpy(uint8_t *dst, uint8_t *src) {
+static uint64_t _simple_strcpy(uint8_t *dst, uint8_t *src) {
+    uint64_t len = 0UL;
     while(*src) {
         *dst = *src;
         dst++;
         src++;
+        len++;
     }
     *dst = 0;
+    return len;
 }
 static uint64_t _simple_strlen(uint8_t *s) {
     uint64_t len = 0UL;
@@ -156,6 +168,19 @@ void proxy_48_faccessat(uint64_t dfd, uint8_t *pathname, uint64_t mode, uint64_t
 }
 
 /**
+ * Syscall 439 faccessat2 - check user's permissions for a file
+ * int faccessat2(int dirfd, const char *pathname, int mode, int flags);
+*/
+void proxy_439_faccessat2(uint64_t dfd, uint8_t *pathname, uint64_t mode, uint64_t flags) {
+    uint64_t ret = 0;
+    uint8_t *hpathname = _host_malloc(4096UL);
+    _simple_strcpy(hpathname, pathname);
+    ret = _host_syscall_4(dfd, (uint64_t)hpathname, mode, flags, 1439);
+    _host_free(hpathname);
+    _ecall_ret(ret);
+}
+
+/**
  * Syscall 56 openat - open a file relative to a directory file descriptor 
  * int openat(int dirfd, const char *pathname, int flags, mode_t mode);
 */
@@ -183,10 +208,23 @@ void proxy_59_pipe2(int32_t *arr_pipefd, int32_t flags) {
 }
 
 /**
+ * Syscall 61 getdents - get directory entries
+ * long syscall(SYS_getdents, unsigned int fd, struct linux_dirent *dirp, unsigned int count);
+ */
+void proxy_61_getdents(int32_t fd, uint8_t *dirp, uint64_t count) {
+    uint64_t ret = 0;
+    uint8_t *hbuf = _host_malloc(count);
+    ret = _host_syscall_3(fd, (uint64_t)hbuf, count, 1061);
+    _rv64memcpy(dirp, hbuf, count);
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
+/**
  * Syscall 63 read - read from a file descriptor
  * ssize_t read(int fd, void buf[.count], size_t count);
 */
-void proxy_63_read(uint64_t fd, uint8_t *buf, int32_t size) {
+void proxy_63_read(uint64_t fd, uint8_t *buf, uint64_t size) {
     uint64_t ret = 0;
     if(size > 0) {
         uint8_t *hbuf = _host_malloc(size);
@@ -201,7 +239,7 @@ void proxy_63_read(uint64_t fd, uint8_t *buf, int32_t size) {
  * Syscall 64 write - write to a file descriptor
  * ssize_t write(int fd, const void buf[.count], size_t count);
 */
-void proxy_64_write(uint64_t fd, uint8_t *buf, int32_t size) {
+void proxy_64_write(uint64_t fd, uint8_t *buf, uint64_t size) {
     uint64_t ret = 0;
     if(size > 0) {
         uint8_t *hbuf = _host_malloc(size);
@@ -251,6 +289,46 @@ struct timespec {
     uint64_t tv_sec;
     uint64_t tv_usec;
 };
+
+/**
+ * Syscall 72 pselect - synchronous I/O multiplexing
+ *  int pselect(int nfds, fd_set *_Nullable restrict readfds,
+                  fd_set *_Nullable restrict writefds,
+                  fd_set *_Nullable restrict exceptfds,
+                  const struct timespec *_Nullable restrict timeout,
+                  const sigset_t *_Nullable restrict sigmask);
+*/
+void proxy_72_pselect(uint64_t nfds, uint8_t *readfds, uint8_t *writefds, uint8_t *exceptfds, struct timespec *timeout, uint8_t *sigmask /* Un-implemented */) {
+    uint8_t * hbuf = _host_malloc(sizeof(struct timespec) + 128 * 3);
+    struct timespec * host_tmo = (struct timespec *)hbuf;
+    if(timeout) {
+        host_tmo->tv_sec = timeout->tv_sec;
+        host_tmo->tv_usec = timeout->tv_usec;
+    }
+    else {
+        host_tmo = 0;
+    }
+    uint8_t * host_readfds = (readfds?(hbuf + sizeof(struct timespec)):0);
+    uint8_t * host_writefds = (writefds?(hbuf + sizeof(struct timespec) + 128):0);
+    uint8_t * host_exceptfds = (exceptfds?(hbuf + sizeof(struct timespec) + 128 * 2):0);
+
+    if(readfds) _rv64memcpy(host_readfds, readfds, 128);
+    if(writefds) _rv64memcpy(host_writefds, writefds, 128);
+    if(exceptfds) _rv64memcpy(host_exceptfds, exceptfds, 128);
+
+    uint64_t ret = _host_syscall_6(nfds,
+        (uint64_t)host_readfds, (uint64_t)host_writefds, (uint64_t)host_exceptfds,
+        (uint64_t)host_tmo, (uint64_t)sigmask,
+        1072
+    );
+
+    if(readfds) _rv64memcpy(readfds, host_readfds, 128);
+    if(writefds) _rv64memcpy(writefds, host_writefds, 128);
+    if(exceptfds) _rv64memcpy(exceptfds, host_exceptfds, 128);
+
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
 
 struct pollfd {
     int32_t     fd;         /* file descriptor */
@@ -467,6 +545,23 @@ void proxy_113_clockgettime(uint64_t clockid, struct timespec *tp) {
     _ecall_ret(ret);
 }
 
+/**
+ * Syscall 115 clock_nanosleep - high-resolution sleep with specifiable clock
+ * int clock_nanosleep(clockid_t clockid, int flags, const struct timespec *t, struct timespec *_Nullable remain);
+*/
+void proxy_115_clock_nanosleep(uint64_t clockid, uint64_t flags, struct timespec *t, struct timespec *remain) {
+    uint64_t ret = 0;
+    struct timespec *htp = (struct timespec *)_host_malloc(sizeof(struct timespec));
+    htp->tv_sec = t->tv_sec;
+    htp->tv_usec = t->tv_usec;
+    ret = _host_syscall_4(clockid, flags, (uint64_t)htp, 0, 1115);
+    if(remain) {
+        remain->tv_sec = remain->tv_usec = 0;
+    }
+    _host_free(htp);
+    _ecall_ret(ret);
+}
+
 #define SIZEOF_SIGSET_T (8UL)
 #define SIZEOF_KERNEL_SIGACTION (16UL + SIZEOF_SIGSET_T)
 
@@ -567,11 +662,25 @@ void proxy_199_socketpair(int32_t domain, int32_t type, int32_t protocal, int32_
     _ecall_ret(ret);
 }
 
+
+/**
+ * Syscall 200 bind - bind a name to a socket
+ * int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+ */
+void proxy_200_bind(int32_t sockfd, int8_t *sockaddr, uint32_t addrlen) {
+    uint64_t ret = 0;
+    uint8_t *hbuf = _host_malloc(addrlen);
+    _rv64memcpy(hbuf, (void*)sockaddr, addrlen);
+    ret = _host_syscall_3(sockfd, (uint64_t)hbuf, addrlen, 1200);
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
 /**
  * Syscall 203 connect - initiate a connection on a socket
  * int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
  */
-void proxy_203_connect(int32_t sockfd, uint64_t sockaddr, uint64_t addrlen) {
+void proxy_203_connect(int32_t sockfd, uint64_t sockaddr, uint32_t addrlen) {
     uint64_t ret = 0;
     uint8_t *hbuf = _host_malloc(addrlen);
     _rv64memcpy(hbuf, (void*)sockaddr, addrlen);
@@ -581,10 +690,44 @@ void proxy_203_connect(int32_t sockfd, uint64_t sockaddr, uint64_t addrlen) {
 }
 
 /**
+ * Syscall 204 getsockname - get socket name
+ * int getsockname(int sockfd, struct sockaddr *restrict addr, socklen_t *restrict addrlen);
+ */
+void proxy_204_getsockname(int32_t sockfd, uint8_t *addr, uint32_t *addrlen) {
+    uint64_t ret = 0;
+    uint8_t *hbuf = _host_malloc(8 + *addrlen);
+    *((uint32_t*)hbuf) = *addrlen;
+    ret = _host_syscall_3(sockfd, (uint64_t)(hbuf + 8), (uint64_t)(hbuf), 1204);
+    *addrlen = *((uint32_t*)hbuf);
+    if(addrlen) {
+        _rv64memcpy(addr, hbuf + 8, *addrlen);
+    }
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
+/**
+ * Syscall 206 sendto - send a message on a socket
+ * ssize_t sendto(int sockfd, const void buf[.len], size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen);
+ */
+void proxy_206_sendto(int32_t sockfd, uint8_t *buf, uint64_t len, uint64_t flags, uint8_t *dest_addr, uint32_t addrlen) {
+    uint64_t ret = 0;
+    uint8_t *hbuf = _host_malloc(len + addrlen);
+    uint8_t *hbuf_addr = hbuf + len;
+    if(dest_addr && addrlen) {
+        _rv64memcpy(hbuf_addr, dest_addr, addrlen);
+    }
+    _rv64memcpy(hbuf, buf, len);
+    ret = _host_syscall_6(sockfd, (uint64_t)hbuf, len, flags, (dest_addr?((uint64_t)hbuf_addr):0), addrlen, 1206);
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
+/**
  * Syscall 208 setsockopt - get and set options on sockets
  * int setsockopt(int sockfd, int level, int optname, const void optval[.optlen], socklen_t optlen);
  */
-void proxy_208_setsockopt(int32_t sockfd, int32_t level, int32_t optname, uint8_t *optval, uint64_t optlen) {
+void proxy_208_setsockopt(int32_t sockfd, int32_t level, int32_t optname, uint8_t *optval, uint32_t optlen) {
     uint64_t ret = 0;
     uint8_t *hbuf = optval;
     if(optlen) {
@@ -599,6 +742,142 @@ void proxy_208_setsockopt(int32_t sockfd, int32_t level, int32_t optname, uint8_
     _ecall_ret(ret);
 }
 
+/**
+ * Syscall 209 getsockopt - get and set options on sockets
+ * int getsockopt(int sockfd, int level, int optname, void optval[restrict *.optlen], socklen_t *restrict optlen);
+ */
+void proxy_209_getsockopt(int32_t sockfd, int32_t level, int32_t optname, uint8_t *optval, uint32_t *optlen) {
+    uint64_t ret = 0;
+    uint8_t *hbuf = _host_malloc(8 + *optlen);
+    *((uint32_t*)hbuf) = *optlen;
+    if(optval) {
+        _rv64memcpy(hbuf + 8, optval, *optlen);
+    }
+    ret = _host_syscall_5(sockfd, level, optname, (uint64_t)(hbuf + 8), (uint64_t)(hbuf), 1209);
+    *optlen = *((uint32_t*)hbuf);
+    if(optval) {
+        _rv64memcpy(optval, hbuf + 8, *optlen);
+    }
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
+struct msghdr {
+    void         *msg_name;       /* Optional address */
+    uint32_t      msg_namelen;    /* Size of address */
+    struct iovec *msg_iov;        /* Scatter/gather array */
+    uint64_t      msg_iovlen;     /* # elements in msg_iov */
+    void         *msg_control;    /* Ancillary data, see below */
+    uint64_t      msg_controllen; /* Ancillary data buffer len */
+    int           msg_flags;      /* Flags on received message */
+};
+
+/**
+ * Syscall 212 recvmsg - receive a message from a socket
+ * ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags);
+ */
+void proxy_212_recvmsg(int32_t sockfd, struct msghdr *msg, uint32_t flags) {
+    uint64_t allocsz = sizeof(struct msghdr) + ALIGN(msg->msg_namelen, 8) + ALIGN(msg->msg_controllen, 8) + (msg->msg_iovlen * sizeof(struct iovec));
+    for(uint64_t i = 0; i < msg->msg_iovlen; i++) {
+        allocsz += ALIGN(msg->msg_iov[i].iov_len, 8);
+    }
+
+    uint8_t *hbuf = _host_malloc(allocsz);
+    uint64_t pos = 0;
+    struct msghdr *hbuf_msg = (struct msghdr *)hbuf;
+    pos += sizeof(struct msghdr);
+    hbuf_msg->msg_namelen = msg->msg_namelen;
+    hbuf_msg->msg_name = 0;
+    if(hbuf_msg->msg_namelen) {
+        hbuf_msg->msg_name = (hbuf + pos);
+        pos += ALIGN(msg->msg_namelen, 8);
+    }
+    hbuf_msg->msg_controllen = msg->msg_controllen;
+    hbuf_msg->msg_control = 0;
+    if(hbuf_msg->msg_controllen) {
+        hbuf_msg->msg_control = (hbuf + pos);
+        pos += ALIGN(msg->msg_controllen, 8);
+    }
+    hbuf_msg->msg_iovlen = msg->msg_iovlen;
+    hbuf_msg->msg_iov = (struct iovec *)(hbuf + pos);
+    pos += (hbuf_msg->msg_iovlen * sizeof(struct iovec));
+    for(uint64_t i = 0; i < hbuf_msg->msg_iovlen; i++) {
+        hbuf_msg->msg_iov[i].iov_len = msg->msg_iov[i].iov_len;
+        hbuf_msg->msg_iov[i].iov_base = (hbuf + pos);
+        pos += ALIGN(hbuf_msg->msg_iov[i].iov_len, 8);
+    }
+    hbuf_msg->msg_flags = msg->msg_flags;
+
+    int64_t ret = _host_syscall_3(sockfd, (uint64_t)hbuf_msg, flags, 1212);
+    if(ret > 0) {
+        int64_t sum = 0;
+        for(uint64_t i = 0; i < hbuf_msg->msg_iovlen && sum < ret; i++) {
+            int64_t step = ret - sum;
+            if(step > hbuf_msg->msg_iov[i].iov_len) step = hbuf_msg->msg_iov[i].iov_len;
+            _rv64memcpy(msg->msg_iov[i].iov_base, hbuf_msg->msg_iov[i].iov_base, step);
+            sum += step;
+        }
+        if(hbuf_msg->msg_controllen) {
+            _rv64memcpy(msg->msg_control, hbuf_msg->msg_control, hbuf_msg->msg_controllen);
+            msg->msg_controllen = hbuf_msg->msg_controllen;
+        }
+        if(hbuf_msg->msg_namelen) {
+            _rv64memcpy(msg->msg_name, hbuf_msg->msg_name, hbuf_msg->msg_namelen);
+            msg->msg_namelen = hbuf_msg->msg_namelen;
+        }
+        msg->msg_flags = hbuf_msg->msg_flags;
+    }
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
+
+/**
+ * Syscall 221 execve - execute program
+ * int execve(const char *pathname, char *const _Nullable argv[], char *const _Nullable envp[]);
+ */
+void proxy_221_execve(char *pathname, char **argv, char **envp) {
+    uint64_t argv_ptr_cnt = 0, env_ptr_cnt = 0;
+    uint64_t sz = 0;
+    {
+        uint64_t len = _simple_strlen(pathname);
+        sz += (ALIGN(len + 1, 8));
+    }
+    for(char ** ptr = argv; *ptr != 0; ptr++, argv_ptr_cnt++) {
+        uint64_t len = _simple_strlen(*ptr);
+        sz += (8 + ALIGN(len + 1, 8));
+    }
+    sz += 8;
+    for(char ** ptr = envp; *ptr != 0; ptr++, env_ptr_cnt++) {
+        uint64_t len = _simple_strlen(*ptr);
+        sz += (8 + ALIGN(len + 1, 8));
+    }
+    sz += 8;
+
+    uint8_t *hbuf = _host_malloc(sz);
+    uint64_t pos = 8 * (argv_ptr_cnt + env_ptr_cnt + 2);
+    uint8_t *argv_ptr_hbuf = hbuf, *env_ptr_hbuf = hbuf + (8 * (argv_ptr_cnt + 1));
+    uint8_t *pathname_hbuf = hbuf + pos;
+
+    pos += ALIGN(_simple_strcpy(pathname_hbuf, pathname) + 1, 8);
+
+    for(uint64_t i = 0; i < argv_ptr_cnt; i++) {
+        ((uint8_t**)argv_ptr_hbuf)[i] = (hbuf + pos);
+        uint64_t len = _simple_strcpy(hbuf + pos, argv[i]);
+        pos += ALIGN(len + 1, 8);
+    }
+    ((uint8_t**)argv_ptr_hbuf)[argv_ptr_cnt] = 0;
+
+    for(uint64_t i = 0; i < env_ptr_cnt; i++) {
+        ((uint8_t**)env_ptr_hbuf)[i] = (hbuf + pos);
+        uint64_t len = _simple_strcpy(hbuf + pos, envp[i]);
+        pos += ALIGN(len + 1, 8);
+    }
+    ((uint8_t**)env_ptr_hbuf)[env_ptr_cnt] = 0;
+
+    uint64_t ret = _host_syscall_3((uint64_t)pathname_hbuf, (uint64_t)argv_ptr_hbuf, (uint64_t)env_ptr_hbuf, 1221);
+    _host_free(hbuf);
+    _ecall_ret(ret);
+}
 
 struct rlimit {
     uint64_t rlim_cur;  /* Soft limit */
