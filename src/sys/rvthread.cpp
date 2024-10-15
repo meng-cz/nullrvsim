@@ -395,6 +395,26 @@ void RVThread::elf_exec(SimWorkload &param, std::list<MemPagesToLoad> *out_vpgs,
         // param.argv.insert(param.argv.begin(), interp_realpath_str);
     }
 
+    if(!param.ldpaths.empty()) {
+        bool hit = false;
+        for(auto &s : param.envs) {
+            if(s.rfind("LD_LIBRARY_PATH=", 0) == 0) {
+                for(auto &p : param.ldpaths) {
+                    s += ":";
+                    s += p;
+                }
+                hit = true;
+            }
+        }
+        if(!hit) {
+            string s = "LD_LIBRARY_PATH=";
+            for(uint64_t i = 0; i < param.ldpaths.size(); i++) {
+                s += (i?(string(":") + param.ldpaths[i]):(param.ldpaths[i]));
+            }
+            param.envs.push_back(s);
+        }
+    }
+
     // 构造初始程序栈
     bool log_stack = conf::get_int("sys", "log_print_init_stack_layout", 0);
     uint64_t stsz = ALIGN(param.stack_size, PAGE_LEN_BYTE);
