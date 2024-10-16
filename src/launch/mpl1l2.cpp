@@ -144,7 +144,6 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     workload.argv.assign(argv.begin(), argv.end());
     workload.file_path = argv[0];
     workload.stack_size = (uint64_t)(conf::get_int("workload", "stack_size_mb", 8)) * 1024UL * 1024UL;
-    workload.envs.emplace_back(generate_ld_library_path_str());
     string ldpath = conf::get_str("workload", "ld_path", "");
     {
         std::stringstream ss(ldpath);

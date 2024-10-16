@@ -769,36 +769,36 @@ void PipeLine5CPU::process_pipeline_5_commit() {
         if(csr_num == CSRNumber::fcsr) {
             switch (inst.param.csr.op)
             {
-            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<0,32>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<0,32>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<0,32>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, isa::rv64_csrrw<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, isa::rv64_csrrs<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, isa::rv64_csrrc<0,32>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, isa::rv64_csrrw<0,32>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, isa::rv64_csrrs<0,32>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, isa::rv64_csrrc<0,32>(&csr_fcsr, inst.imm)); break;
             default: ERR_CSR_OP;
             }
         }
         else if(csr_num == CSRNumber::frm) {
             switch (inst.param.csr.op)
             {
-            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<5,3>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<5,3>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<5,3>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, isa::rv64_csrrw<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, isa::rv64_csrrs<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, isa::rv64_csrrc<5,3>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, isa::rv64_csrrw<5,3>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, isa::rv64_csrrs<5,3>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, isa::rv64_csrrc<5,3>(&csr_fcsr, inst.imm)); break;
             default: ERR_CSR_OP;
             }
         }
         else if(csr_num == CSRNumber::fflags) {
             switch (inst.param.csr.op)
             {
-            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
-            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrw<0,5>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrs<0,5>(&csr_fcsr, inst.imm)); break;
-            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, csr_fcsr = isa::rv64_csrrc<0,5>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRW: iregs.setu(inst.rd, isa::rv64_csrrw<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRS: iregs.setu(inst.rd, isa::rv64_csrrs<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRC: iregs.setu(inst.rd, isa::rv64_csrrc<0,5>(&csr_fcsr, iregs.getu(inst.rs1))); break;
+            case RV64CSROP3::CSRRWI: iregs.setu(inst.rd, isa::rv64_csrrw<0,5>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRSI: iregs.setu(inst.rd, isa::rv64_csrrs<0,5>(&csr_fcsr, inst.imm)); break;
+            case RV64CSROP3::CSRRCI: iregs.setu(inst.rd, isa::rv64_csrrc<0,5>(&csr_fcsr, inst.imm)); break;
             default: ERR_CSR_OP;
             }
         }

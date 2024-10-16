@@ -134,16 +134,8 @@ SimError _fp_cmp_64(RV64FPCMP3 cmp, IntDataT *out, double v1, double v2) {
     return SimError::success;
 }
 
-SimError _fp_cvt_f2i(RV64FPWidth2 fwid, RV64FPCVTWidth5 iwid, RV64FPRM3 rm, IntDataT *out, FPDataT s) {
-    if(!_supported_fp_width(fwid)) return SimError::unsupported;
-    double v = 0;
+SimError _f2i_normal(RV64FPCVTWidth5 iwid, RV64FPRM3 rm, IntDataT *out, double v, uint64_t *p_fcsr) {
     IntDataT ret;
-    switch (fwid)
-    {
-    case RV64FPWidth2::fdword: v = RAW_DATA_AS(s).f64; break;
-    case RV64FPWidth2::fword : v = RAW_DATA_AS(s).f32; break;
-    default: return SimError::unsupported;
-    }
     switch (rm)
     {
     case RV64FPRM3::RNE : v += 0.5; break;
@@ -153,30 +145,150 @@ SimError _fp_cvt_f2i(RV64FPWidth2 fwid, RV64FPCVTWidth5 iwid, RV64FPRM3 rm, IntD
     default: return SimError::unsupported;
     }
     if(iwid == RV64FPCVTWidth5::word) {
-        if(v < -pow(2., 31.)) RAW_DATA_AS(ret).u64 = 0xffffffff80000000UL;
-        else if(v > pow(2., 31.)-1.) RAW_DATA_AS(ret).u64 = 0x000000007fffffffUL;
-        else RAW_DATA_AS(ret).i64 = (int32_t)v;
+        if(v < -pow(2., 31.)) {
+            RAW_DATA_AS(ret).u64 = 0xffffffff80000000UL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else if(v > pow(2., 31.)-1.) {
+            RAW_DATA_AS(ret).u64 = 0x000000007fffffffUL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else {
+            RAW_DATA_AS(ret).i64 = (int32_t)v;
+        }
     }
     else if(iwid == RV64FPCVTWidth5::uword) {
-        if(v < 0) RAW_DATA_AS(ret).u64 = 0x0000000000000000UL;
-        else if(v > pow(2., 32.)-1.) RAW_DATA_AS(ret).u64 = 0x00000000ffffffffUL;
-        else RAW_DATA_AS(ret).u64 = (uint32_t)v;
+        if(v < 0) {
+            RAW_DATA_AS(ret).u64 = 0x0000000000000000UL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else if(v > pow(2., 32.)-1.) {
+            RAW_DATA_AS(ret).u64 = 0x00000000ffffffffUL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else {
+            RAW_DATA_AS(ret).u64 = (uint32_t)v;
+        }
     }
     else if(iwid == RV64FPCVTWidth5::dword) {
-        if(v < -pow(2., 63.)) RAW_DATA_AS(ret).u64 = 0x8000000000000000UL;
-        else if(v > pow(2., 63.)-1.) RAW_DATA_AS(ret).u64 = 0x7fffffffffffffffUL;
-        else RAW_DATA_AS(ret).i64 = (int64_t)v;
+        if(v < -pow(2., 63.)) {
+            RAW_DATA_AS(ret).u64 = 0x8000000000000000UL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else if(v > pow(2., 63.)-1.) {
+            RAW_DATA_AS(ret).u64 = 0x7fffffffffffffffUL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else {
+            RAW_DATA_AS(ret).i64 = (int64_t)v;
+        }
     }
     else if(iwid == RV64FPCVTWidth5::udword) {
-        if(v < 0) RAW_DATA_AS(ret).u64 = 0x0000000000000000UL;
-        else if(v > pow(2., 64.)-1.) RAW_DATA_AS(ret).u64 = 0xffffffffffffffffUL;
-        else RAW_DATA_AS(ret).u64 = (uint64_t)v;
+        if(v < 0) {
+            RAW_DATA_AS(ret).u64 = 0x0000000000000000UL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else if(v > pow(2., 64.)-1.) {
+            RAW_DATA_AS(ret).u64 = 0xffffffffffffffffUL;
+            *p_fcsr |= RV_FFLAGS_INVALID;
+        }
+        else {
+            RAW_DATA_AS(ret).u64 = (uint64_t)v;
+        }
     }
     else {
         return SimError::unsupported;
     }
     *out = ret;
     return SimError::success;
+}
+
+SimError _fp_cvt_f2i_32(RV64FPCVTWidth5 iwid, RV64FPRM3 rm, IntDataT *out, FPDataT s, uint64_t *p_fcsr) {
+    if(((s & 0x7f800000UL) == 0x7f800000UL) && (s & 0x007fffffUL)) {
+        // NaN, -NaN
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0x000000007fffffffUL; break;
+        case RV64FPCVTWidth5::uword: *out = 0xffffffffffffffffUL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x7fffffffffffffffUL; break;
+        case RV64FPCVTWidth5::udword: *out = 0xffffffffffffffffUL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    else if(((s & 0xff800000UL) == 0xff800000UL) && !(s & 0x007fffffUL)) {
+        // -inf
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0xffffffff80000000UL; break;
+        case RV64FPCVTWidth5::uword: *out = 0UL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x8000000000000000UL; break;
+        case RV64FPCVTWidth5::udword: *out = 0UL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    else if(((s & 0xff800000UL) == 0x7f800000UL) && !(s & 0x007fffffUL)) {
+        // inf
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0x000000007fffffffUL; break;
+        case RV64FPCVTWidth5::uword: *out = 0xffffffffffffffffUL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x7fffffffffffffffUL; break;
+        case RV64FPCVTWidth5::udword: *out = 0xffffffffffffffffUL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    
+    return _f2i_normal(iwid, rm, out, RAW_DATA_AS(s).f32, p_fcsr);
+}
+
+SimError _fp_cvt_f2i_64(RV64FPCVTWidth5 iwid, RV64FPRM3 rm, IntDataT *out, FPDataT s, uint64_t *p_fcsr) {
+    if(((s & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) && (s & 0x000fffffffffffffUL)) {
+        // NaN, -NaN
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0x000000007fffffffUL; break;
+        case RV64FPCVTWidth5::uword: *out = 0xffffffffffffffffUL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x7fffffffffffffffUL; break;
+        case RV64FPCVTWidth5::udword: *out = 0xffffffffffffffffUL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    else if(((s & 0xfff0000000000000UL) == 0xfff0000000000000UL) && !(s & 0x000fffffffffffffUL)) {
+        // -inf
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0xffffffff80000000UL; break;
+        case RV64FPCVTWidth5::uword: *out = 0UL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x8000000000000000UL; break;
+        case RV64FPCVTWidth5::udword: *out = 0UL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    else if(((s & 0xfff0000000000000UL) == 0x7ff0000000000000UL) && !(s & 0x000fffffffffffffUL)) {
+        // inf
+        switch (iwid)
+        {
+        case RV64FPCVTWidth5::word: *out = 0x000000007fffffffUL; break;
+        case RV64FPCVTWidth5::uword: *out = 0xffffffffffffffffUL; break;
+        case RV64FPCVTWidth5::dword: *out = 0x7fffffffffffffffUL; break;
+        case RV64FPCVTWidth5::udword: *out = 0xffffffffffffffffUL; break;
+        default: return SimError::unsupported;
+        }
+        *p_fcsr |= RV_FFLAGS_INVALID;
+        return SimError::success;
+    }
+    
+    return _f2i_normal(iwid, rm, out, RAW_DATA_AS(s).f64, p_fcsr);
 }
 
 SimError _fp_cvt_i2f(RV64FPWidth2 fwid, RV64FPCVTWidth5 iwid, RV64FPRM3 rm, FPDataT *out, IntDataT s) {
@@ -273,7 +385,7 @@ SimError _fp_mv_f2i(RV64FPWidth2 fwid, RV64FPMVI3 mv, IntDataT *out, FPDataT s) 
         switch (fwid)
         {
         case RV64FPWidth2::fdword: RAW_DATA_AS(ret).u64 = RAW_DATA_AS(s).u64; break;
-        case RV64FPWidth2::fword : RAW_DATA_AS(ret).u64 = RAW_DATA_AS(s).u32; break;
+        case RV64FPWidth2::fword : RAW_DATA_AS(ret).i64 = RAW_DATA_AS(s).i32; break;
         default: return SimError::unsupported;
         }
     }
@@ -335,6 +447,20 @@ inline SimError _fp_sgnj_64(RV64FPSGNJ3 cfg, double *out, double v1, double v2) 
     return SimError::success;
 }
 
+inline void _check_canonical_nan_32(RawDataT *out) {
+    float f = RAW_DATA_AS(*out).f32;
+    if(isnan(f)) {
+        RAW_DATA_AS(*out).u64 = 0x7fc00000UL;
+    }
+}
+
+inline void _check_canonical_nan_64(RawDataT *out) {
+    double f = RAW_DATA_AS(*out).f64;
+    if(isnan(f)) {
+        RAW_DATA_AS(*out).u64 = 0x7ff8000000000000UL;
+    }
+}
+
 SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s2, uint64_t *p_fcsr) {
     if(!_supported_fp_width(param.fwid)) return SimError::unsupported;
     assert(out);
@@ -344,10 +470,10 @@ SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s
     if(param.fwid == RV64FPWidth2::fword) {
         switch (param.op)
         {
-        case RV64FPOP5::ADD  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 + RAW_DATA_AS(s2).f32; break;
-        case RV64FPOP5::SUB  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 - RAW_DATA_AS(s2).f32; break;
-        case RV64FPOP5::MUL  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 * RAW_DATA_AS(s2).f32; break;
-        case RV64FPOP5::DIV  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 / RAW_DATA_AS(s2).f32; break;
+        case RV64FPOP5::ADD  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 + RAW_DATA_AS(s2).f32; _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::SUB  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 - RAW_DATA_AS(s2).f32; _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::MUL  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 * RAW_DATA_AS(s2).f32; _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::DIV  : RAW_DATA_AS(ret).f32 = RAW_DATA_AS(s1).f32 / RAW_DATA_AS(s2).f32; _check_canonical_nan_32(&ret); break;
         case RV64FPOP5::SQRT :
             if(RAW_DATA_AS(s1).f32 < 0) {
                 RAW_DATA_AS(ret).u64 = 0x7FC00000UL;
@@ -355,11 +481,11 @@ SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s
             }
             else {
                 RAW_DATA_AS(ret).f32 = sqrt(RAW_DATA_AS(s1).f32);
-            } break;
-        case RV64FPOP5::SGNJ : err = _fp_sgnj_32(param.funct3.sgnj, (float*)(&ret), RAW_DATA_AS(s1).f32, RAW_DATA_AS(s2).f32); break;
-        case RV64FPOP5::MIN  : err = _fp_min<float>(param.funct3.minmax, (float*)(&ret), RAW_DATA_AS(s1).f32, RAW_DATA_AS(s2).f32); break;
-        case RV64FPOP5::MVF2F: err = _fp_mv_f2f(param.fwid, (RV64FPWidth2)(param.iwid), &ret, s1); break;
-        case RV64FPOP5::CVTF2I: err = _fp_cvt_f2i(param.fwid, param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1); break;
+            } _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::SGNJ : err = _fp_sgnj_32(param.funct3.sgnj, (float*)(&ret), RAW_DATA_AS(s1).f32, RAW_DATA_AS(s2).f32); _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::MIN  : err = _fp_min<float>(param.funct3.minmax, (float*)(&ret), RAW_DATA_AS(s1).f32, RAW_DATA_AS(s2).f32); _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::MVF2F: err = _fp_mv_f2f(param.fwid, (RV64FPWidth2)(param.iwid), &ret, s1); _check_canonical_nan_32(&ret); break;
+        case RV64FPOP5::CVTF2I: err = _fp_cvt_f2i_32(param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1, p_fcsr); break;
         case RV64FPOP5::CVTI2F: err = _fp_cvt_i2f(param.fwid, param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1); break;
         case RV64FPOP5::MVF2I : err = _fp_mv_f2i(param.fwid, param.funct3.mv, &ret, s1); break;
         case RV64FPOP5::MVI2F : RAW_DATA_AS(ret).u64 = (RAW_DATA_AS(s1).u64 & 0xffffffffUL); break;
@@ -371,10 +497,10 @@ SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s
     else if(param.fwid == RV64FPWidth2::fdword) {
         switch (param.op)
         {
-        case RV64FPOP5::ADD  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 + RAW_DATA_AS(s2).f64; break;
-        case RV64FPOP5::SUB  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 - RAW_DATA_AS(s2).f64; break;
-        case RV64FPOP5::MUL  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 * RAW_DATA_AS(s2).f64; break;
-        case RV64FPOP5::DIV  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 / RAW_DATA_AS(s2).f64; break;
+        case RV64FPOP5::ADD  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 + RAW_DATA_AS(s2).f64; _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::SUB  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 - RAW_DATA_AS(s2).f64; _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::MUL  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 * RAW_DATA_AS(s2).f64; _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::DIV  : RAW_DATA_AS(ret).f64 = RAW_DATA_AS(s1).f64 / RAW_DATA_AS(s2).f64; _check_canonical_nan_64(&ret); break;
         case RV64FPOP5::SQRT : 
             if(RAW_DATA_AS(s1).f64 < 0) {
                 RAW_DATA_AS(ret).u64 = 0x7ff8000000000000UL;
@@ -382,11 +508,11 @@ SimError perform_fp_op(RV64FPParam param, RawDataT *out, RawDataT s1, RawDataT s
             }
             else {
                 RAW_DATA_AS(ret).f64 = sqrt(RAW_DATA_AS(s1).f64);
-            } break;
-        case RV64FPOP5::SGNJ : err = _fp_sgnj_64(param.funct3.sgnj, (double*)(&ret), RAW_DATA_AS(s1).f64, RAW_DATA_AS(s2).f64); break;
-        case RV64FPOP5::MIN  : err = _fp_min<double>(param.funct3.minmax, (double*)(&ret), RAW_DATA_AS(s1).f64, RAW_DATA_AS(s2).f64); break;
-        case RV64FPOP5::MVF2F: err = _fp_mv_f2f(param.fwid, (RV64FPWidth2)(param.iwid), &ret, s1); break;
-        case RV64FPOP5::CVTF2I: err = _fp_cvt_f2i(param.fwid, param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1); break;
+            } _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::SGNJ : err = _fp_sgnj_64(param.funct3.sgnj, (double*)(&ret), RAW_DATA_AS(s1).f64, RAW_DATA_AS(s2).f64); _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::MIN  : err = _fp_min<double>(param.funct3.minmax, (double*)(&ret), RAW_DATA_AS(s1).f64, RAW_DATA_AS(s2).f64); _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::MVF2F: err = _fp_mv_f2f(param.fwid, (RV64FPWidth2)(param.iwid), &ret, s1); _check_canonical_nan_64(&ret); break;
+        case RV64FPOP5::CVTF2I: err = _fp_cvt_f2i_64(param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1, p_fcsr); break;
         case RV64FPOP5::CVTI2F: err = _fp_cvt_i2f(param.fwid, param.iwid, ((param.funct3.rm == RV64FPRM3::DYN)?((RV64FPRM3)(((*p_fcsr)>>5)&7)):(param.funct3.rm)), &ret, s1); break;
         case RV64FPOP5::MVF2I : err = _fp_mv_f2i(param.fwid, param.funct3.mv, &ret, s1); break;
         case RV64FPOP5::MVI2F : RAW_DATA_AS(ret).u64 = RAW_DATA_AS(s1).u64; break;

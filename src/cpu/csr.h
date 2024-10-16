@@ -28,12 +28,10 @@ inline RawDataT rv64_csrrw(RawDataT *p_csr, RawDataT src) {
     static_assert(BitLen >= 0);
     static_assert(BitPos + BitLen <= 64);
     assert(p_csr);
-    if(src == 0) return *p_csr;
     const RawDataT mask = (((1UL << BitLen) - 1UL) << BitPos);
     RawDataT ret = ((*p_csr & mask) >> BitPos);
-    RawDataT save = (*p_csr & (~mask));
-    save |= ((src & ((1UL << BitLen) - 1UL)) << BitPos);
-    *p_csr = save;
+    RawDataT validsrc = ((src & ((1UL << BitLen) - 1UL)) << BitPos);
+    *p_csr = ((*p_csr & (~mask)) | validsrc);
     return ret;
 }
 
@@ -44,9 +42,10 @@ inline RawDataT rv64_csrrs(RawDataT *p_csr, RawDataT src) {
     static_assert(BitLen >= 0);
     static_assert(BitPos + BitLen <= 64);
     assert(p_csr);
-    if(src == 0) return *p_csr;
-    RawDataT ret = *p_csr;
-    *p_csr |= ((src & ((1UL << BitLen) - 1UL)) << BitPos);
+    const RawDataT mask = (((1UL << BitLen) - 1UL) << BitPos);
+    RawDataT ret = ((*p_csr & mask) >> BitPos);
+    RawDataT validsrc = ((src & ((1UL << BitLen) - 1UL)) << BitPos);
+    *p_csr |= validsrc;
     return ret;
 }
 
@@ -57,9 +56,10 @@ inline RawDataT rv64_csrrc(RawDataT *p_csr, RawDataT src) {
     static_assert(BitLen >= 0);
     static_assert(BitPos + BitLen <= 64);
     assert(p_csr);
-    if(src == 0) return *p_csr;
-    RawDataT ret = *p_csr;
-    *p_csr &= (~((src & ((1UL << BitLen) - 1UL)) << BitPos));
+    const RawDataT mask = (((1UL << BitLen) - 1UL) << BitPos);
+    RawDataT ret = ((*p_csr & mask) >> BitPos);
+    RawDataT validsrc = ((src & ((1UL << BitLen) - 1UL)) << BitPos);
+    *p_csr &= (~validsrc);
     return ret;
 }
 
