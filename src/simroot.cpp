@@ -129,19 +129,21 @@ void add_sim_object(SimObject *p_obj, std::string name, int latency) {
         .name = name,
         .p_obj = p_obj,
         .latency = latency,
-        .current = latency - 1
+        .current = ((latency > 0)?(latency - 1):0)
     };
     root->all_sim_objs.push_back(tmp);
-    double cur = p_obj->do_on_current_tick, apl = p_obj->do_apply_next_tick;
-    SimRootThreadTask * t = root->task_order_apl[0];
-    if(p_obj->do_on_current_tick) {
-        t = root->task_order_cur[0];
+    if(latency) {
+        double cur = p_obj->do_on_current_tick, apl = p_obj->do_apply_next_tick;
+        SimRootThreadTask * t = root->task_order_apl[0];
+        if(p_obj->do_on_current_tick) {
+            t = root->task_order_cur[0];
+        }
+        t->simobjs.push_back(tmp);
+        t->cur_sum += cur;
+        t->apl_sum += apl;
+        std::make_heap(root->task_order_cur.begin(), root->task_order_cur.end(), SimRootThreadTaskCmpCur());
+        std::make_heap(root->task_order_apl.begin(), root->task_order_apl.end(), SimRootThreadTaskCmpApl());
     }
-    t->simobjs.push_back(tmp);
-    t->cur_sum += cur;
-    t->apl_sum += apl;
-    std::make_heap(root->task_order_cur.begin(), root->task_order_cur.end(), SimRootThreadTaskCmpCur());
-    std::make_heap(root->task_order_apl.begin(), root->task_order_apl.end(), SimRootThreadTaskCmpApl());
 }
 
 void clear_sim_object() {

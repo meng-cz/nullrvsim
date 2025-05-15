@@ -38,6 +38,9 @@ public:
     virtual void on_current_tick() { main_on_current_tick(); };
     virtual void apply_next_tick() { main_apply_next_tick(); };
 
+    virtual void print_statistic(std::ofstream &ofile);
+    virtual void print_setup_info(std::ofstream &ofile);
+
     virtual void dump_core(std::ofstream &ofile);
 
     friend class PrivL1L2MoesiL1DPort;
@@ -45,6 +48,10 @@ public:
 protected:
 
 // ------------- Bus Port ---------------
+
+    CacheParam l2_param;
+    CacheParam l1d_param;
+    CacheParam l1i_param;
 
     BusInterfaceV2 *bus = nullptr;
     uint16_t my_port_id = 0;
@@ -265,8 +272,6 @@ protected:
 
         uint64_t    l2_hit_count = 0;
         uint64_t    l2_miss_count = 0;
-
-
     } statistic;
 
     string logname;

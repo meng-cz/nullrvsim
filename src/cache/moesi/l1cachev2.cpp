@@ -14,7 +14,7 @@ L1CacheMoesiDirNoiV2::L1CacheMoesiDirNoiV2(
     BusPortT my_port_id,
     BusPortMapping *busmap,
     string logname
-) : bus(bus), my_port_id(my_port_id), busmap(busmap), log_name(logname) {
+) : bus(bus), my_port_id(my_port_id), busmap(busmap), log_name(logname), param(param) {
     do_on_current_tick = 4;
     do_apply_next_tick = 1;
 
@@ -666,6 +666,26 @@ void L1CacheMoesiDirNoiV2::clear_misc(std::list<CacheOP*> *to_free) {
     for(auto &q : misc_queues) {
         q.clear(to_free);
     }
+}
+
+void L1CacheMoesiDirNoiV2::print_statistic(std::ofstream &ofile) {
+    #define PIPELINE_5_GENERATE_PRINTSTATISTIC(n) ofile << #n << ": " << statistic.n << "\n" ;
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1_miss_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l2_request_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l2_avg_respond_cycle)
+    #undef PIPELINE_5_GENERATE_PRINTSTATISTIC
+}
+
+#define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
+
+void L1CacheMoesiDirNoiV2::print_setup_info(std::ofstream &ofile) {
+    LOGTOFILE("port_id: %d\n", my_port_id);
+    LOGTOFILE("way_count: %d\n", param.way_cnt);
+    LOGTOFILE("set_count: %d\n", 1 << param.set_offset);
+    LOGTOFILE("mshr_count: %d\n", param.mshr_num);
+    LOGTOFILE("index_width: %d\n", param.index_width);
+    LOGTOFILE("index_latency: %d\n", param.index_latency);
 }
 
 

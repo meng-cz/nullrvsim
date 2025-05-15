@@ -34,6 +34,9 @@ public:
     virtual void on_current_tick();
     virtual void apply_next_tick();
     
+    virtual void print_statistic(std::ofstream &ofile);
+    virtual void print_setup_info(std::ofstream &ofile);
+
     virtual void dump_core(std::ofstream &ofile);
 
     bool do_log = false;
@@ -41,6 +44,8 @@ public:
 
 protected:
     char log_buf[256];
+
+    CacheParam param;
 
     BusInterfaceV2 *bus = nullptr;
     BusPortT my_port_id;
@@ -142,6 +147,11 @@ protected:
     void p3_process();
 
     CacheEventTrace *trace = nullptr;
+
+    struct {
+        uint64_t llc_hit_count = 0;
+        uint64_t llc_miss_count = 0;
+    } statistic;
 
 };
 

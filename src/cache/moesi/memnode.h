@@ -29,6 +29,9 @@ public:
         CacheEventTrace *trace
     );
 
+    virtual void print_statistic(std::ofstream &ofile);
+    virtual void print_setup_info(std::ofstream &ofile);
+
     virtual void on_current_tick();
 
 protected:
@@ -52,7 +55,13 @@ protected:
     uint32_t memory_access_buf_size = 4;
     std::list<MemoryAccessBuf> membufs;
 
+    struct {
+        uint64_t request_precossed = 0;
+        uint64_t busy_cycles = 0;
+    } statistic;
+
     CacheEventTrace *trace = nullptr;
+    char log_buf[256];
 };
 
 }}

@@ -66,7 +66,7 @@ make -j16
 ./nullrvsim operation [-c configs] [-w workload argvs]
 ```
 
-**operation:** 运行项目，目前只有mp_moesi_l1l2这一项，启动src/launch/l1l2.cpp中的内容。其他测试项详见main.cpp。
+**operation:** 运行项目，目前有mp_moesi_l3，mp_moesi_l1l2这两项，分别启动src/launch/l3.cpp, src/launch/l1l2.cpp中的内容。其他测试项详见main.cpp。
 
 **-c (可选):** 配置文件ini的路径，默认为conf/default.ini。
 
@@ -79,7 +79,7 @@ make -j16
 build/conf/default.ini:
 ```ini
 [root]
-; 模拟器本体的线程数
+; 模拟器本体的线程数，建议为1
 thread_num = 1
 ; 输出内容（模拟配置与统计信息）所在的目录
 out_dir = out
@@ -91,11 +91,6 @@ core_path = core.txt
 stack_size_mb = 32
 ; 运行动态链接elf时用到的rv动态库所在目录
 ld_path = /usr/riscv64-linux-gnu/lib
-
-[sys]
-; 设置模拟的核心类型（现在只能从下面二选一）
-; cpu_type = pipeline5
-cpu_type = xiangshan
 
 [multicore]
 ; 模拟的CPU核心数量
@@ -109,7 +104,7 @@ mem_size_mb = 1024
 运行example中静态链接的rv64gc elf文件：
 ```bash
 # pwd : .../build
-./nullrvsim mp_moesi_l1l2 -w example/helloworld.riscv
+./nullrvsim mp_moesi_l3 -w example/helloworld.riscv
 ```
 
 运行动态链接的elf文件：
@@ -123,7 +118,7 @@ ld_path = /usr/riscv64-linux-gnu/lib
 ```bash
 # pwd : .../build
 riscv64-linux-gnu-gcc ../example/helloworld.c -o helloworld.dyn.riscv
-./nullrvsim mp_moesi_l1l2 -w helloworld.dyn.riscv
+./nullrvsim mp_moesi_l3 -w helloworld.dyn.riscv
 ```
 
 ### 运行pthread多线程程序测试：
@@ -138,14 +133,14 @@ mem_size_mb = 1024
 
 ```bash
 # pwd : .../build
-./nullrvsim mp_moesi_l1l2 -w example/pthread_test.riscv 4 1024
+./nullrvsim mp_moesi_l3 -w example/pthread_test.riscv 4 1024
 ```
 
 ### 运行基于fork的多进程程序测试：
 
 ```bash
 # pwd : .../build
-./nullrvsim mp_moesi_l1l2 -w example/mptest.riscv 4 1024
+./nullrvsim mp_moesi_l3 -w example/mptest.riscv 4 1024
 ```
 
 

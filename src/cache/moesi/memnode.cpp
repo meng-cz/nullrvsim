@@ -21,9 +21,24 @@ MemoryNode::MemoryNode(
     memory_access_buf_size = conf::get_int("mem", "memory_access_buf_size", 4);
 }
 
+#define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
+
+void MemoryNode::print_statistic(std::ofstream &ofile) {
+    LOGTOFILE("message_precossed: %ld\n", statistic.request_precossed);
+    LOGTOFILE("busy_rate: %f\n", ((double)(statistic.busy_cycles))/(simroot::get_current_tick()));
+}
+
+void MemoryNode::print_setup_info(std::ofstream &ofile) {
+    LOGTOFILE("port_id: %d\n", my_port);
+    LOGTOFILE("data_width: %d\n", dwidth);
+}
+
+
+
 void MemoryNode::on_current_tick() {
     CacheCohenrenceMsg msg;
     bool recv = false;
+    bool busy = false;
     if(membufs.size() < memory_access_buf_size) {
         for(uint32_t c = 0; c < CHANNEL_CNT; c++) {
             if(bus->can_recv(my_port, c)) {
@@ -60,6 +75,8 @@ void MemoryNode::on_current_tick() {
             simroot_assert(0);
         }
         if(trace) trace->insert_event(msg.transid, CacheEvent::MEM_HANDLE);
+        statistic.request_precossed ++;
+        busy = true;
     }
 
     if(membufs.empty()) {
@@ -81,6 +98,7 @@ void MemoryNode::on_current_tick() {
                 membufs.erase(iter);
             }
             break;
+            busy = true;
         }
     }
 
@@ -103,7 +121,12 @@ void MemoryNode::on_current_tick() {
             simroot_assert(bus->send(my_port, iter->src_port, CHANNEL_RESP, buf));
             membufs.erase(iter);
             break;
+            busy = true;
         }
+    }
+
+    if(busy) {
+        statistic.busy_cycles++;
     }
 }
 

@@ -225,15 +225,17 @@ bool mp_moesi_l1l2(std::vector<string> &argv) {
     std::vector<std::unique_ptr<L1CacheMoesiDirNoiV2>> l1is;
     for(uint32_t i = 0; i < param.cpu_num; i++) {
         assert(busmap.get_reqnode_port(i*2, &busport));
-        sprintf(namebuf, "l1dcache%d", i);
+        sprintf(namebuf, "L1DCache%d", i);
         l1ds.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoiV2>(
             dcp, bus.get(), busport, &busmap, namebuf
         )));
+        simroot::add_sim_object(l1ds.back().get(), namebuf, 0);
         assert(busmap.get_reqnode_port(i*2 + 1, &busport));
-        sprintf(namebuf, "l1icache%d", i);
+        sprintf(namebuf, "L1ICache%d", i);
         l1is.emplace_back(std::move(std::make_unique<L1CacheMoesiDirNoiV2>(
             icp, bus.get(), busport, &busmap, namebuf
         )));
+        simroot::add_sim_object(l1is.back().get(), namebuf, 0);
     }
 
     std::vector<CPUInterface*> cpu_ptrs;

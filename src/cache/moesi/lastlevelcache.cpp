@@ -15,7 +15,7 @@ LLCMoesiDirNoi::LLCMoesiDirNoi(
     BusPortMapping *busmap,
     string logname,
     CacheEventTrace *trace
-) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace), 
+) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace), param(param),
 queue_index(1,1,0), queue_writeback(1,1,4), queue_index_result(1,1,0)
 {
     do_on_current_tick = 5;
@@ -162,6 +162,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->delay_commit = true;
 
             if(trace) trace->insert_event(transid, CacheEvent::L3_MISS);
+            statistic.llc_miss_count++;
         }
         else if(!(pak->dir_hit) && pak->blk_hit) {
             // LLC block hit, not in L1
@@ -173,6 +174,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->entry.owner = l1_index;
 
             if(trace) trace->insert_event(transid, CacheEvent::L3_HIT);
+            statistic.llc_hit_count++;
         }
         else {
             simroot_assert(pak->entry.exists.find(pak->entry.owner) != pak->entry.exists.end());
@@ -183,6 +185,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->delay_commit = true;
             
             if(trace) trace->insert_event(transid, CacheEvent::L3_FORWARD);
+            statistic.llc_hit_count++;
         }
     }
     else if(pak->type == MSG_GETM) {
@@ -210,6 +213,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->delay_commit = true;
             
             if(trace) trace->insert_event(transid, CacheEvent::L3_MISS);
+            statistic.llc_miss_count++;
         }
         else if(!(pak->dir_hit) && pak->blk_hit) {
             // LLC block hit, not in L1
@@ -221,6 +225,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->entry.owner = l1_index;
             
             if(trace) trace->insert_event(transid, CacheEvent::L3_HIT);
+            statistic.llc_miss_count++;
         }
         else {
             if(pak->blk_hit) {
@@ -252,6 +257,7 @@ void LLCMoesiDirNoi::p2_index() {
             pak->delay_commit = true;
             
             if(trace) trace->insert_event(transid, skip_owner?(CacheEvent::L3_FORWARD):(CacheEvent::L3_HIT));
+            statistic.llc_miss_count++;
         }
     }
     else if(pak->type == MSG_PUTS || pak->type == MSG_PUTE) {
@@ -374,7 +380,28 @@ void LLCMoesiDirNoi::apply_next_tick() {
     queue_writeback.apply_next_tick();
     queue_index_result.apply_next_tick();
 }
-    
+
+
+#define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
+#define PIPELINE_5_GENERATE_PRINTSTATISTIC(n) ofile << #n << ": " << statistic.n << "\n" ;
+
+void LLCMoesiDirNoi::print_statistic(std::ofstream &ofile) {
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(llc_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(llc_miss_count)
+}
+
+void LLCMoesiDirNoi::print_setup_info(std::ofstream &ofile) {
+    LOGTOFILE("port_id: %d\n", my_port_id);
+    LOGTOFILE("way_count: %d\n", param.way_cnt);
+    LOGTOFILE("set_count: %d\n", 1 << param.set_offset);
+    LOGTOFILE("mshr_count: %d\n", param.mshr_num);
+    LOGTOFILE("index_width: %d\n", param.index_width);
+    LOGTOFILE("index_latency: %d\n", param.index_latency);
+    LOGTOFILE("nuca_index: %d\n", param.nuca_index);
+    LOGTOFILE("nuca_num: %d\n", param.nuca_num);
+}
+
+
 void LLCMoesiDirNoi::dump_core(std::ofstream &ofile) {
     for(uint32_t s = 0; s < block->set_count; s++) {
         sprintf(log_buf, "set %d: ", s);

@@ -17,7 +17,7 @@ PrivL1L2Moesi::PrivL1L2Moesi(
     BusPortMapping *busmap,
     string logname,
     CacheEventTrace *trace
-) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace) {
+) : bus(bus), my_port_id(my_port_id), busmap(busmap), logname(logname), trace(trace), l2_param(l2_param), l1d_param(l1d_param), l1i_param(l1i_param) {
     do_on_current_tick = 6;
     do_apply_next_tick = 1;
 
@@ -1106,6 +1106,31 @@ void PrivL1L2Moesi::main_apply_next_tick() {
     for(auto &q : l1i_ld_queues) {
         q.apply_next_tick();
     }
+}
+
+#define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
+
+void PrivL1L2Moesi::print_statistic(std::ofstream &ofile) {
+    #define PIPELINE_5_GENERATE_PRINTSTATISTIC(n) ofile << #n << ": " << statistic.n << "\n" ;
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1i_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1i_miss_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1d_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l1d_miss_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l2_hit_count)
+    PIPELINE_5_GENERATE_PRINTSTATISTIC(l2_miss_count)
+}
+
+void PrivL1L2Moesi::print_setup_info(std::ofstream &ofile) {
+    LOGTOFILE("port_id: %d\n", my_port_id);
+    LOGTOFILE("l1i_way_count: %d\n", l1i_param.way_cnt);
+    LOGTOFILE("l1i_set_count: %d\n", 1 << l1i_param.set_offset);
+    LOGTOFILE("l1d_way_count: %d\n", l1d_param.way_cnt);
+    LOGTOFILE("l1d_set_count: %d\n", 1 << l1d_param.set_offset);
+    LOGTOFILE("l2_way_count: %d\n", l2_param.way_cnt);
+    LOGTOFILE("l2_set_count: %d\n", 1 << l2_param.set_offset);
+    LOGTOFILE("l2_mshr_count: %d\n", l2_param.mshr_num);
+    LOGTOFILE("l2_index_width: %d\n", l2_param.index_width);
+    LOGTOFILE("l2_index_latency: %d\n", l2_param.index_latency);
 }
 
 }}

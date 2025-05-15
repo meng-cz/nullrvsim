@@ -15,7 +15,7 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
     BusRouteTable &route,
     string name
 )
-: cha_widths(channels_width_byte), route(route), logname(name)
+: cha_widths(channels_width_byte), route(route), logname(name), init_port_to_node(port_to_node)
 {
 
     width = conf::get_int("symmulcha", "width", 64);
@@ -89,6 +89,8 @@ SymmetricMultiChannelBus::SymmetricMultiChannelBus(
     for(auto &e : all_edges) {
         edges[alloc].input.assign(cha_cnt, nullptr);
         edges[alloc].output.assign(cha_cnt, nullptr);
+        edges[alloc].from = e.first;
+        edges[alloc].to = e.second;
         nodes[e.first].txs.emplace(e.second, &(edges[alloc]));
         nodes[e.second].rxs.push_back(&(edges[alloc]));
         alloc++;
@@ -115,11 +117,30 @@ void SymmetricMultiChannelBus::clear_statistic() {
 #define LOGTOFILE(fmt, ...) do{sprintf(log_buf, fmt, ##__VA_ARGS__);ofile << log_buf;}while(0)
 
 void SymmetricMultiChannelBus::print_statistic(std::ofstream &ofile) {
-    
+    LOGTOFILE("transmit_package_number: %ld\n", tx_pack_num);
+    LOGTOFILE("avg_transmit_latency: %ld\n", tx_pack_cycle_sum / tx_pack_num);
+    long cur = simroot::get_current_tick();
+    for(auto n : init_port_to_node) {
+        auto &node = nodes[n];
+        LOGTOFILE("node_%d_transmit_package_number: %ld\n", n, node.passed_packs);
+        LOGTOFILE("node_%d_busy_rate: %f\n", n, ((double)(node.busy_cycles))/ cur);
+    }
+    for(auto &e : edges) {
+        LOGTOFILE("edge_%d_to_%d_busy_rate: %f\n", e.from, e.to, ((double)(e.busy_cycles))/ cur);
+    }
+    for(auto &e : transmit_cnt) {
+        LOGTOFILE("transmit_package_number_from_%ld_to_%ld: %ld\n", e.first >> 32, e.first & (0xffffffffUL), e.second);
+    }
 }
 
 void SymmetricMultiChannelBus::print_setup_info(std::ofstream &ofile) {
-    
+    LOGTOFILE("node_number: %ld\n", port2node.size());
+    for(auto &e : port2node) {
+        LOGTOFILE("node_id_of_port_%d: %d\n", e.first, e.second);
+    }
+    for(auto &e : edges) {
+        LOGTOFILE("edge: %d to %d\n", e.from, e.to);
+    }
 }
 
 void SymmetricMultiChannelBus::dump_core(std::ofstream &ofile) {
@@ -180,6 +201,7 @@ bool SymmetricMultiChannelBus::send(BusPortT port, BusPortT dst_port, ChannelT c
         p->pac_idx = i;
         p->pac_cnt = pac_cnt;
         p->data.assign(cwid, 0);
+        p->tx_start_tick = simroot::get_current_tick();
         memcpy(p->data.data(), data.data() + pos, std::min<uint32_t>(cwid, data.size() - pos));
         pos += cwid;
         sbuf.push_back(p);
@@ -233,6 +255,17 @@ bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint
         simroot_assertf(i == p->pac_idx, "Bus: Un-ordered package sequence in port %d, channel %d", port, channel);
         memcpy(buf.data() + pos, p->data.data(), cwid);
         pos += cwid;
+        {
+            tx_pack_num ++;
+            tx_pack_cycle_sum += (simroot::get_current_tick() - p->tx_start_tick);
+            uint64_t key = ((uint64_t)(p->src) << 32) | (p->dst);
+            auto iter = transmit_cnt.find(key);
+            if(iter == transmit_cnt.end()) {
+                iter = transmit_cnt.emplace(key, 0).first;
+            }
+            iter->second++;
+        }
+        
         delete p;
         rbuf.pop_front();
     }
@@ -253,6 +286,7 @@ bool SymmetricMultiChannelBus::recv(BusPortT port, ChannelT channel, vector<uint
 
 void SymmetricMultiChannelBus::process_node(NodeStruct *node) {
     
+    bool busy = false;
     MsgPack *recv = nullptr;
     for(int i = 0; i < node->rxs.size(); i++) {
         EdgeInChannel *e = node->rxs[node->rx_ptr];
@@ -312,12 +346,16 @@ void SymmetricMultiChannelBus::process_node(NodeStruct *node) {
                     node->order_buf.erase(xmt);
                 }
             }
+            if(cnt == recv->pac_idx + 1) {
+                node->passed_packs++;
+            }
         }
         else {
             node->pipeline.emplace_back();
             node->pipeline.back().pack = recv;
             node->pipeline.back().cycle_remained = route_latency;
         }
+        busy = true;
     }
 
     {
@@ -339,8 +377,11 @@ void SymmetricMultiChannelBus::process_node(NodeStruct *node) {
             else {
                 iter++;
             }
+            busy = true;
         }
     }
+
+    if(busy) node->busy_cycles++;
 }
 
 void SymmetricMultiChannelBus::process_edge(EdgeInChannel *edge) {
@@ -350,6 +391,7 @@ void SymmetricMultiChannelBus::process_edge(EdgeInChannel *edge) {
             edge->output[i] = edge->input[i];
             edge->input[i] = nullptr;
             total_sz += edge->output[i]->data.size();
+            edge->busy_cycles ++;
         }
     }
 }

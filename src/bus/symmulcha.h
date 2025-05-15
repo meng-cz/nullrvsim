@@ -49,6 +49,7 @@ protected:
     uint32_t node_buf_sz = 0;
     uint32_t xmtid_alloc = 0;
     vector<uint32_t> cha_widths;
+    vector<BusNodeT> init_port_to_node;
     unordered_map<BusPortT, BusNodeT> port2node;
     BusRouteTable route;
     
@@ -62,6 +63,7 @@ protected:
         uint16_t        pac_idx;
         uint16_t        pac_cnt;
         vector<uint8_t> data;
+        uint64_t        tx_start_tick;
     } MsgPack;
 
     typedef struct {
@@ -72,6 +74,9 @@ protected:
     typedef struct {
         vector<MsgPack*>    input;
         vector<MsgPack*>    output;
+        uint32_t            from = 0;
+        uint32_t            to = 0;
+        uint64_t            busy_cycles = 0;
     } EdgeInChannel;
 
     typedef struct {
@@ -94,14 +99,21 @@ protected:
         
         unordered_map<BusPortT, PortStruct*> port;
         unordered_map<BusPortT, PortStruct*>::iterator sd_ptr;
+
+        uint64_t        busy_cycles = 0;
+        uint64_t        passed_packs = 0;
     } NodeStruct;
 
     unordered_map<BusNodeT, NodeStruct> nodes;
     unordered_map<BusPortT, PortStruct> ports;
     vector<EdgeInChannel>   edges;
-
+    
     void process_node(NodeStruct *node);
     void process_edge(EdgeInChannel *edge);
+
+    uint64_t tx_pack_num = 0;
+    uint64_t tx_pack_cycle_sum = 0;
+    unordered_map<uint64_t, uint64_t> transmit_cnt;
 
     string logname;
     simroot::LogFileT log_ofile = nullptr;

@@ -57,6 +57,9 @@ public:
     virtual void on_current_tick();
     virtual void apply_next_tick();
 
+    virtual void print_statistic(std::ofstream &ofile);
+    virtual void print_setup_info(std::ofstream &ofile);
+
     virtual void dump_core(std::ofstream &ofile);
 
     bool do_log = false;
@@ -79,6 +82,8 @@ protected:
     bool has_recieved = false;
     bool has_processed = false;
     CacheCohenrenceMsg msgbuf;
+
+    CacheParam param;
 
     BusInterfaceV2 *bus = nullptr;
     uint16_t my_port_id = 0;
