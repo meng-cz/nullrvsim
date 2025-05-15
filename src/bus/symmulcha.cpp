@@ -118,7 +118,7 @@ void SymmetricMultiChannelBus::clear_statistic() {
 
 void SymmetricMultiChannelBus::print_statistic(std::ofstream &ofile) {
     LOGTOFILE("transmit_package_number: %ld\n", tx_pack_num);
-    LOGTOFILE("avg_transmit_latency: %ld\n", tx_pack_cycle_sum / tx_pack_num);
+    LOGTOFILE("avg_transmit_latency: %f\n", ((double)(tx_pack_cycle_sum)) / tx_pack_num);
     long cur = simroot::get_current_tick();
     for(auto n : init_port_to_node) {
         auto &node = nodes[n];
@@ -134,7 +134,7 @@ void SymmetricMultiChannelBus::print_statistic(std::ofstream &ofile) {
 }
 
 void SymmetricMultiChannelBus::print_setup_info(std::ofstream &ofile) {
-    LOGTOFILE("node_number: %ld\n", port2node.size());
+    LOGTOFILE("port_number: %ld\n", port2node.size());
     for(auto &e : port2node) {
         LOGTOFILE("node_id_of_port_%d: %d\n", e.first, e.second);
     }
