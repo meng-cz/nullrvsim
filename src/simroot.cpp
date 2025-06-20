@@ -23,11 +23,13 @@ inline void log_file_close(LogFile *p) {
     delete p;
 }
 
-typedef struct {
+typedef struct alignas(64) {
     std::string name;
     SimObject *p_obj = nullptr;
     int latency = 0;
     int current = 0;
+
+    uint8_t pad[64 - sizeof(name) - sizeof(p_obj) - sizeof(latency) - sizeof(current)];
 } SimObjectWithFreq;
 
 typedef struct alignas(64) {
@@ -56,11 +58,7 @@ public:
     SimRoot(uint32_t thread_num) : barrier(thread_num), thread_num(thread_num) {
         tasks = new SimRootThreadTask[thread_num];
         ths = new pthread_t[thread_num];
-        for(int i = 0; i < thread_num; i++) {
-            task_order_cur.push_back(tasks + i);
-            task_order_apl.push_back(tasks + i);
-        }
-        barrier.wait_interval = conf::get_int("root", "barrier_wait_interval", 1024);
+        // barrier.wait_interval = conf::get_int("root", "barrier_wait_interval", 1024);
         lock_log.wait_interval = conf::get_int("root", "log_lock_wait_interval", 1024);
 
         global_freq = conf::get_int("root", "global_freq_mhz", 1000) * 1000000UL;
@@ -85,8 +83,7 @@ public:
     std::vector<SimObjectWithFreq> all_sim_objs;
 
     SimRootThreadTask *tasks = nullptr;
-    std::vector<SimRootThreadTask*> task_order_cur;
-    std::vector<SimRootThreadTask*> task_order_apl;
+    uint32_t insert_thread_idx = 0;
 
     SpinLock lock_log;
 
@@ -134,16 +131,16 @@ void add_sim_object(SimObject *p_obj, std::string name, int latency) {
     root->all_sim_objs.push_back(tmp);
     if(latency) {
         double cur = p_obj->do_on_current_tick, apl = p_obj->do_apply_next_tick;
-        SimRootThreadTask * t = root->task_order_apl[0];
-        if(p_obj->do_on_current_tick) {
-            t = root->task_order_cur[0];
-        }
+        SimRootThreadTask * t = root->tasks + root->insert_thread_idx;
         t->simobjs.push_back(tmp);
         t->cur_sum += cur;
         t->apl_sum += apl;
-        std::make_heap(root->task_order_cur.begin(), root->task_order_cur.end(), SimRootThreadTaskCmpCur());
-        std::make_heap(root->task_order_apl.begin(), root->task_order_apl.end(), SimRootThreadTaskCmpApl());
     }
+}
+
+void add_sim_object_next_thread(SimObject *p_obj, std::string name, int latency) {
+    add_sim_object(p_obj, name, latency);
+    root->insert_thread_idx = (root->insert_thread_idx + 1) % root->thread_num;
 }
 
 void clear_sim_object() {
@@ -154,6 +151,15 @@ void clear_sim_object() {
     }
     root->all_sim_objs.clear();
 }
+
+void __attribute__((noinline)) sync_cur() {
+    root->barrier.wait();
+}
+
+void __attribute__((noinline)) sync_apl() {
+    root->barrier.wait();
+}
+
 
 void* simroot_thread_function(void *param) {
     uint64_t index = (uint64_t)param;
@@ -172,7 +178,7 @@ void* simroot_thread_function(void *param) {
             }
         }
 
-        root->barrier.wait();
+        sync_cur();
 
         for(auto &entry : root->tasks[index].simobjs) {
             if(entry.current == 0) {
@@ -208,7 +214,7 @@ void* simroot_thread_function(void *param) {
             root->tasks[index].do_clear_statistic = false;
         }
 
-        root->barrier.wait();
+        sync_apl();
 
     }
 
@@ -349,6 +355,11 @@ void log_stderr(const char *buf, uint64_t sz) {
     root->stderr_logfile.flush();
 }
 
+
+void set_current_tick(uint64_t tick) {
+    init_simroot();
+    root->current_tick = tick;
+}
 
 uint64_t get_current_tick() {
     init_simroot();

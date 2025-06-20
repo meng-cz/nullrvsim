@@ -13,6 +13,9 @@
 #include "sys/syscallmem.h"
 
 #include "launch/launch.h"
+#include "launch/simplecache.hpp"
+
+#include "test/test_scc.hpp"
 
 #define TEST(x) printf("Execute: %s\n", #x); if(!x) printf("Test %s failed\n", #x);
 
@@ -137,6 +140,12 @@ void execution() {
         TEST(launch::mp_moesi_l3(W));
     });
 
+    OPERATION(op, "mp_scc_l1l2", {
+        ASSERT_MORE_ARGS(W, 1, "elf_path");
+        TEST(launch::mp_scc_l1l2(W));
+    });
+
+
     // -------- Simulator Test --------
 
     OPERATION(op, "test_simroot", {
@@ -188,6 +197,17 @@ void execution() {
     OPERATION(op, "test_moesi_l1_dma", {
         TEST(test::test_moesi_l1_dma());
     });
+
+    
+    OPERATION(op, "test_scc_1l24l1_seq_wr", {
+        TEST(test::test_scc_1l24l1_seq_wr());
+    });
+
+    OPERATION(op, "test_scc_1l24l1_rand_wr", {
+        TEST(test::test_scc_1l24l1_rand_wr());
+    });
+
+
 
     // -------- Bus Test --------
 

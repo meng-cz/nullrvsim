@@ -94,6 +94,9 @@ public:
             apply_fregs = true;
         }
     };
+    virtual void flush_tlb(VPageIndexT vpn) {
+        tlb.clear();
+    };
 
     void ifence() {
         simroot_assert(0);
@@ -119,6 +122,21 @@ protected:
     CacheInterface *io_icache_port;
     CacheInterface *io_dcache_port;
     CPUSystemInterface *io_sys_port;
+
+    unordered_map<uint64_t, PageIndexT> tlb;
+    SimError trans(VirtAddrT vaddr, PhysAddrT *paddr, uint32_t flg) {
+        uint64_t key = ((vaddr >> PAGE_ADDR_OFFSET) << PAGE_ADDR_OFFSET) + flg;
+        auto iter = tlb.find(key);
+        if(iter != tlb.end()) {
+            *paddr = (iter->second << PAGE_ADDR_OFFSET) + (vaddr & (PAGE_LEN_BYTE - 1));
+            return SimError::success;
+        }
+        SimError ret = io_sys_port->v_to_p(cpu_id, vaddr, paddr, flg);
+        if(ret == SimError::success) {
+            tlb.emplace(key, (*paddr) >> PAGE_ADDR_OFFSET);
+        }
+        return ret;
+    }
     
     void init_all();
 

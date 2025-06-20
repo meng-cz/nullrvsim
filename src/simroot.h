@@ -12,6 +12,7 @@ namespace simroot {
 // --------- 模拟对象管理 ------------
 
 void add_sim_object(SimObject *p_obj, std::string name, int latency=1);
+void add_sim_object_next_thread(SimObject *p_obj, std::string name, int latency=1);
 
 void clear_sim_object();
 
@@ -46,6 +47,7 @@ void log_stderr(const char *buf, uint64_t sz);
 
 // --------- 周期与时间管理 ------------
 
+void set_current_tick(uint64_t tick);
 uint64_t get_current_tick();
 
 uint64_t get_wall_time_tick();

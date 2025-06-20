@@ -73,8 +73,8 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
         VirtAddrT vpc = pc, vpc2 = pc+2;
         PhysAddrT ppc = 0, ppc2 = 0;
         SimError res1 = SimError::success, res2 = SimError::success;
-        if((res1 = io_sys_port->v_to_p(cpu_id, vpc, &ppc, PGFLAG_X)) == SimError::success &&
-            (res2 = io_sys_port->v_to_p(cpu_id, vpc2, &ppc2, PGFLAG_X)) == SimError::success
+        if((res1 = trans(vpc, &ppc, PGFLAG_X)) == SimError::success &&
+            (res2 = trans(vpc2, &ppc2, PGFLAG_X)) == SimError::success
         ) {
             res1 = io_icache_port->load(ppc, 2, &(inst.inst_raw), false);
             cache_operation_result_check_error(res1, vpc, vpc, ppc, 2);
@@ -112,7 +112,7 @@ void PipeLine5CPU::process_pipeline_1_fetch() {
     else {
         LineAddrT prefetch_addr = addr_to_line_addr(pc) + CACHE_LINE_LEN_BYTE;
         PhysAddrT prefetch_paddr;
-        // if(io_sys_port->v_to_p(cpu_id, prefetch_addr, &prefetch_paddr)) {
+        // if(trans(prefetch_addr, &prefetch_paddr)) {
         //     io_icache_port->prefetch(prefetch_paddr);
         // }
 
@@ -380,7 +380,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             io_sys_port->dev_output(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &data);
         }
         else {
-            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            SimError res = trans(vaddr, &paddr, PGFLAG_R | PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
                 p4_result.second = p4_workload.second;
@@ -416,7 +416,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             io_sys_port->dev_input(cpu_id, vaddr, isa::rv64_ls_width_to_length(inst.param.amo.wid), &(p5inst.arg0));
         }
         else {
-            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            SimError res = trans(vaddr, &paddr, PGFLAG_R | PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
                 p4_result.second = p4_workload.second;
@@ -461,7 +461,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
         }
         else {
             PhysAddrT paddr = 0;
-            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R | PGFLAG_W);
+            SimError res = trans(vaddr, &paddr, PGFLAG_R | PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
                 p4_result.second = p4_workload.second;
@@ -534,7 +534,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             
         }
         else {
-            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_R);
+            SimError res = trans(vaddr, &paddr, PGFLAG_R);
             if(res != SimError::success) {
                 p5inst.err = res;
                 p4_result.second = p4_workload.second;
@@ -585,7 +585,7 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             }
         }
         else {
-            SimError res = io_sys_port->v_to_p(cpu_id, vaddr, &paddr, PGFLAG_W);
+            SimError res = trans(vaddr, &paddr, PGFLAG_W);
             if(res != SimError::success) {
                 p5inst.err = res;
                 p4_result.second = p4_workload.second;

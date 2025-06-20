@@ -48,6 +48,8 @@ public:
 protected:
     bool has_init = false;
 
+    DefaultLock global_lock;
+
     SpinLock sch_lock;
 
     typedef struct {

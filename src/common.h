@@ -10,6 +10,8 @@
 #include <map>
 #include <memory>
 #include <filesystem>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +30,7 @@ using std::list;
 using std::unordered_map;
 using std::unordered_multimap;
 using std::set;
+using std::unordered_set;
 using std::make_pair;
 using std::move;
 using std::string;

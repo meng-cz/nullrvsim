@@ -80,41 +80,49 @@ public:
 
     void wait ()
     {
-        unsigned int step = step_.load ();
+        unsigned int step = step_.load (std::memory_order_relaxed);
 
         if (nwait_.fetch_add (1) == n_ - 1)
         {
-            nwait_.store (0); // XXX: maybe can use relaxed ordering here ??
-            step_.fetch_add (1);
+            nwait_.store (0); // maybe can use relaxed ordering here ??
+            step_.store (step + 1, std::memory_order_release);
             return ;
         }
         else
         {
-            while (step_.load () == step) {
-                for(uint64_t i = 0; i < wait_interval; i++) {
-                    __asm__ volatile("nop");
-                }
+            while (step_.load (std::memory_order_relaxed) == step) {
+                __builtin_ia32_pause();
+                // for(uint64_t i = 0; i < wait_interval; i++) {
+                //     __asm__ volatile("nop");
+                // }
             }
+            std::atomic_thread_fence(std::memory_order_acquire);
             return ;
         }
     }
 
-    uint64_t wait_interval = 1024UL;
 protected:
-
-    /* Number of synchronized threads. */
     const unsigned int n_;
 
-    /* Number of threads currently spinning.  */
     std::atomic<unsigned int> nwait_;
 
     uint8_t pad0[HOST_CACHE_LEN_BYTE - sizeof(nwait_) - sizeof(n_)];
 
-    /* Number of barrier syncronizations completed so far, 
-     * it's OK to wrap.  */
     std::atomic<unsigned int> step_;
     
     uint8_t pad1[HOST_CACHE_LEN_BYTE - sizeof(step_)];
 };
+
+// class alignas(HOST_CACHE_LEN_BYTE) SpinBarrier
+// {
+// public:
+//     SpinBarrier (unsigned int n) {
+//         std::atomic_init(&count, n);
+//     }
+
+// private:
+//     std::atomic<int32_t> count;
+
+// }
 
 #endif

@@ -236,6 +236,8 @@ bool SimSystemMultiCore::dev_amo(uint32_t cpu_id, VirtAddrT addr, uint32_t len, 
 }
 
 VirtAddrT SimSystemMultiCore::ecall(uint32_t cpu_id, VirtAddrT addr, RVRegArray &regs) {
+    global_lock.lock();
+
     uint64_t syscallid = regs[RV_REG_a7];
     if(log_info) {
         sprintf(log_buf, "CPU%d Raise an ECALL: %ld", cpu_id, syscallid);
@@ -352,11 +354,12 @@ VirtAddrT SimSystemMultiCore::ecall(uint32_t cpu_id, VirtAddrT addr, RVRegArray 
 
 #undef MP_EMPTY_CASE
 #undef MP_SYSCALL_CASE
-
+    global_lock.unlock();
     return retpc;
 }
 
 VirtAddrT SimSystemMultiCore::ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray &iregs) {
+    global_lock.lock();
     if(log_info) {
         sprintf(log_buf, "CPU%d Raise an EBREAK @0x%lx", cpu_id, addr);
         simroot::print_log_info(log_buf);
@@ -366,18 +369,22 @@ VirtAddrT SimSystemMultiCore::ebreak(uint32_t cpu_id, VirtAddrT addr, RVRegArray
     CPUInterface *cpu = cpu_devs[cpu_id].cpu;
     if(is_dev_mem(cpu_id, addr)) {
         // This is an ecall ret
-        return thread->recover_context_stack(iregs);
+        VirtAddrT ret = thread->recover_context_stack(iregs);
+        global_lock.unlock();
+        return ret;
     }
     else {
         sprintf(log_buf, "CPU%d Raise an EBREAK @0x%lx", cpu_id, addr);
         simroot::print_log_info(log_buf);
         cpu->halt();
+        global_lock.unlock();
         simroot::stop_sim_and_exit();
         return 0UL;
     }
 }
 
 VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError expno, uint64_t arg1, uint64_t arg2, RVRegArray &iregs) {
+    global_lock.lock();
     if(expno == SimError::pagefault) {
         RVThread *curt = cpu_devs[cpu_id].exec_thread;
         curt->save_context_stack(pc, iregs, true);
@@ -394,6 +401,7 @@ VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError 
             simroot::print_log_info(log_bufs[cpu_id].data());
         }
 
+        global_lock.unlock();
         return syscall_memory->get_syscall_proxy_entry(501);
     }
     else {
@@ -401,10 +409,12 @@ VirtAddrT SimSystemMultiCore::exception(uint32_t cpu_id, VirtAddrT pc, SimError 
         LOG(ERROR)<<(log_bufs[cpu_id].data());
         simroot_assert(0);
     }
+    global_lock.unlock();
     return pc;
 }
 
 void SimSystemMultiCore::dma_complete_callback(uint64_t callbackid) {
+    global_lock.lock();
     sch_lock.lock();
     auto res = dma_wait_threads.find((RVThread*)callbackid);
     if(res != dma_wait_threads.end()) {
@@ -423,6 +433,7 @@ void SimSystemMultiCore::dma_complete_callback(uint64_t callbackid) {
         }
     }
     sch_lock.unlock();
+    global_lock.unlock();
 }
 
 void * SimSystemMultiCore::poll_wait_thread_function(void * _param) {

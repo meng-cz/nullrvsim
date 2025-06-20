@@ -15,6 +15,7 @@ class CPUInterface : public SimObject {
 public:
     virtual void halt() = 0;
     virtual void redirect(VirtAddrT addr, RVRegArray &regs) = 0;
+    virtual void flush_tlb(VPageIndexT vpn) {};
 };
 
 class CPUSystemInterface {
