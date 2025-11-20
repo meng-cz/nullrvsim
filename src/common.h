@@ -41,7 +41,11 @@ using std::make_shared;
 using std::make_unique;
 using std::make_pair;
 
+typedef __int128_t int128_t;
+typedef __uint128_t uint128_t;
 
+static_assert(sizeof(uint128_t) == 16, "sizeof(uint128_t) == 16");
+static_assert(sizeof(int128_t) == 16, "sizeof(int128_t) == 16");
 static_assert(sizeof(uint64_t) == 8, "sizeof(uint64_t) == 8");
 static_assert(sizeof(int64_t) == 8, "sizeof(int64_t) == 8");
 static_assert(sizeof(uint32_t) == 4, "sizeof(uint32_t) == 4");
