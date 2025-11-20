@@ -6,6 +6,8 @@
 #include "simroot.h"
 #include "configuration.h"
 
+#include <filesystem>
+
 namespace simcpu {
 
 namespace xs {
@@ -1767,6 +1769,30 @@ void XiangShanCPU::_do_csr_inst(XSInst *inst) {
             if(inst->prd) {
                 ireg.regfile[inst->prd] = (csrs.fcsr & RV_FRM_MASK);
                 csrs.fcsr &= (~(ireg.regfile[inst->prs[0]] & RV_FRM_MASK));
+            }
+            break;
+        default:
+            sprintf(log_buf, "%lx: Unknown CSR op @0x%lx: %s\n", simroot::get_current_tick(), inst->pc, inst->dbgname.c_str());
+            LOG(ERROR) << log_buf;
+            exit(0);
+        }
+    }
+    else if(inst->param.csr.index == 0xc00) { // cycle
+        switch (inst->param.csr.op)
+        {
+        case isa::RV64CSROP3::CSRRW:
+            if(inst->prd) {
+                ireg.regfile[inst->prd] = simroot::get_current_tick();
+            }
+            break;
+        case isa::RV64CSROP3::CSRRS:
+            if(inst->prd) {
+                ireg.regfile[inst->prd] = simroot::get_current_tick();
+            }
+            break;
+        case isa::RV64CSROP3::CSRRC:
+            if(inst->prd) {
+                ireg.regfile[inst->prd] = simroot::get_current_tick();
             }
             break;
         default:

@@ -286,15 +286,14 @@ bool decode_rv64(RVInstT raw, RV64InstDecoded *dec) {
     else if(op == RV64OPCode::system) {
         auto inst = parse_inst_I(raw);
         dec->rs1 = inst.rs1;
-        dec->rs2 = inst.imm;
         dec->imm = inst.imm;
         dec->rd = inst.rd;
         dec->param.csr.op = (RV64CSROP3)(inst.funct3);
-        dec->param.csr.index = (RVCSRIndexT)(inst.imm);
+        dec->param.csr.index = (RVCSRIndexT)(inst.imm & 0xfff);
         dec->flag |= (RVINSTFLAG_UNIQUE);
         if(raw == 0x00000073) dec->flag |= RVINSTFLAG_ECALL;
         else if(raw == 0x00100073) dec->flag |= RVINSTFLAG_EBREAK;
-        else dec->flag |= (RVINSTFLAG_RDINT | RVINSTFLAG_S1INT | RVINSTFLAG_S2INT);
+        else dec->flag |= (RVINSTFLAG_RDINT | RVINSTFLAG_S1INT);
     }
     else {
         return false;
