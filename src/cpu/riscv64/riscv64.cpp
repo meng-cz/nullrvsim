@@ -22,6 +22,7 @@
 
 #include "riscv64.h"
 #include "intop.h"
+#include "amoop.h"
 
 namespace riscv64 {
 
@@ -46,7 +47,413 @@ string get_freg_name(RegIdxT index) {
     return freg_names[index];
 }
 
+template<typename T>
+inline T get_bits_at(T n, uint32_t offset, uint32_t len) {
+    return (((n) >> (offset)) & ((((T)1)<<(len)) - ((T)1)));
+}
 
+inline uint64_t get_imm_I(InstT inst) {
+    uint64_t ret = (get_bits_at(inst, 20, 12));
+    if(inst & (1<<31)) ret = ret | 0xfffffffffffff000UL;
+    return ret;
+}
+inline uint64_t get_imm_S(InstT inst) {
+    uint64_t ret = (get_bits_at(inst, 7, 5)) | (get_bits_at(inst, 25, 7) << 5);
+    if(inst & (1<<31)) ret = ret | 0xfffffffffffff000UL;
+    return ret;
+}
+inline uint64_t get_imm_B(InstT inst) {
+    uint64_t ret = (get_bits_at(inst, 8, 4) << 1) | (get_bits_at(inst, 25, 6) << 5) | (get_bits_at(inst, 7, 1) << 11);
+    if(inst & (1<<31)) ret |= 0xfffffffffffff000UL;
+    return ret;
+}
+inline uint64_t get_imm_U(InstT inst) {
+    uint64_t ret = (inst & 0xfffff000U);
+    if(inst & (1<<31)) ret |= 0xffffffff00000000UL;
+    return ret;
+}
+inline uint64_t get_imm_J(InstT inst) {
+    uint64_t ret = (get_bits_at(inst, 21, 10) << 1) | (get_bits_at(inst, 20, 1) << 11) | (inst & 0xFF000);
+    if(inst & (1<<31)) ret = ret | 0xfffffffffff00000UL;
+    return ret;
+}
+
+inline uint32_t get_opcode(InstT inst) {
+    return get_bits_at(inst, 0, 7);
+}
+inline uint32_t get_funct3(InstT inst) {
+    return get_bits_at(inst, 12, 3);
+}
+inline uint32_t get_funct7(InstT inst) {
+    return get_bits_at(inst, 25, 7);
+}
+inline uint32_t get_rd(InstT inst) {
+    return get_bits_at(inst, 7, 5);
+}
+inline uint32_t get_rs1(InstT inst) {
+    return get_bits_at(inst, 15, 5);
+}
+inline uint32_t get_rs2(InstT inst) {
+    return get_bits_at(inst, 20, 5);
+}
+inline uint32_t get_rs3(InstT inst) {
+    return get_bits_at(inst, 27, 5);
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_load(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_imm_I(inst);
+    instinfo->desttype = DestType::IREG;
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->exetype = ExeType::LOAD;
+    instinfo->exeop = static_cast<ExeOPType>(get_funct3(inst));
+    return (instinfo->exeop <= static_cast<ExeOPType>(LOADOPType::LWU));
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_store(InstT inst, InstInfo *instinfo) {
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->imm = get_imm_S(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IREG;
+    instinfo->exetype = ExeType::STORE;
+    instinfo->exeop = static_cast<ExeOPType>(get_funct3(inst));
+    return (instinfo->exeop <= static_cast<ExeOPType>(STOREOPType::SD));
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_lui(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->imm = get_imm_U(inst);
+    instinfo->srctype1 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::ALU;
+    instinfo->exeop = static_cast<ExeOPType>(ALUOPType::ADD);
+    return true;
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_auipc(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->imm = get_imm_U(inst);
+    instinfo->srctype1 = SrcType::PC;
+    instinfo->srctype2 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::JUMP;
+    instinfo->exeop = static_cast<ExeOPType>(JUMPOPType::AUIPC);
+    return true;
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_jal(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->imm = get_imm_J(inst);
+    instinfo->srctype1 = SrcType::PC;
+    instinfo->srctype2 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::JUMP;
+    instinfo->exeop = static_cast<ExeOPType>(JUMPOPType::JAL);
+    return true;
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_jalr(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_imm_I(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::JUMP;
+    instinfo->exeop = static_cast<ExeOPType>(JUMPOPType::JALR);
+    return true;
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_branch(InstT inst, InstInfo *instinfo) {
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->imm = get_imm_B(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IREG;
+    instinfo->exetype = ExeType::BRANCH;
+    instinfo->exeop = static_cast<ExeOPType>(get_funct3(inst));
+    return (instinfo->exeop <= static_cast<ExeOPType>(BRANCHOPType::BGEU) && instinfo->exeop != 2 && instinfo->exeop != 3);
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_opimm(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_imm_I(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::ALU;
+    switch (get_funct3(inst) | (get_funct7(inst) << 3))
+    {
+    case 0b0000000000: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::ADD); break;
+    case 0b0100000000: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SUB); break;
+    case 0b0000000001: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SLL); break;
+    case 0b0000000010: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SLT); break;
+    case 0b0000000011: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SLTU); break;
+    case 0b0000000100: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::XOR); break;
+    case 0b0000000101: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SRL); break;
+    case 0b0100000101: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SRA); break;
+    case 0b0000000110: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::OR); break;
+    case 0b0000000111: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::AND); break;
+    default: return false;
+    }
+    return true;
+}
+
+/**
+ * I Extension
+ */
+inline bool _decode_opimm32(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_imm_I(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IMM;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::ALU;
+    switch (get_funct3(inst) | (get_funct7(inst) << 3))
+    {
+    case 0b0000000000: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::ADDW); break;
+    case 0b0100000000: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SUBW); break;
+    case 0b0000000001: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SLLW); break;
+    case 0b0000000101: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SRLW); break;
+    case 0b0100000101: instinfo->exeop = static_cast<ExeOPType>(ALUOPType::SRAW); break;
+    default: return false;
+    }
+    return true;
+}
+
+/**
+ * I Extension
+ * M Extension
+ */
+inline bool _decode_op(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IREG;
+    instinfo->desttype = DestType::IREG;
+    switch (get_funct3(inst) | (get_funct7(inst) << 3))
+    {
+    #define GEN_ITEM(bits, exu, exop) case bits: instinfo->exetype = exu; instinfo->exeop = static_cast<ExeOPType>(exop); break
+    GEN_ITEM(0b0000000000, ExeType::ALU, ALUOPType::ADD);
+    GEN_ITEM(0b0100000000, ExeType::ALU, ALUOPType::SUB);
+    GEN_ITEM(0b0000000001, ExeType::ALU, ALUOPType::SLL);
+    GEN_ITEM(0b0000000010, ExeType::ALU, ALUOPType::SLT);
+    GEN_ITEM(0b0000000011, ExeType::ALU, ALUOPType::SLTU);
+    GEN_ITEM(0b0000000100, ExeType::ALU, ALUOPType::XOR);
+    GEN_ITEM(0b0000000101, ExeType::ALU, ALUOPType::SRL);
+    GEN_ITEM(0b0100000101, ExeType::ALU, ALUOPType::SRA);
+    GEN_ITEM(0b0000000110, ExeType::ALU, ALUOPType::OR);
+    GEN_ITEM(0b0000000111, ExeType::ALU, ALUOPType::AND);
+    GEN_ITEM(0b0000001000, ExeType::MUL, MULOPType::MUL);
+    GEN_ITEM(0b0000001001, ExeType::MUL, MULOPType::MULH);
+    GEN_ITEM(0b0000001010, ExeType::MUL, MULOPType::MULHSU);
+    GEN_ITEM(0b0000001011, ExeType::MUL, MULOPType::MULHU);
+    GEN_ITEM(0b0000001100, ExeType::DIV, DIVOPType::DIV);
+    GEN_ITEM(0b0000001101, ExeType::DIV, DIVOPType::DIVU);
+    GEN_ITEM(0b0000001110, ExeType::DIV, DIVOPType::REM);
+    GEN_ITEM(0b0000001111, ExeType::DIV, DIVOPType::REMU);
+    default: return false;
+    #undef GEN_ITEM
+    }
+    return true;
+}
+
+/**
+ * I Extension
+ * M Extension
+ */
+inline bool _decode_op32(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IREG;
+    instinfo->desttype = DestType::IREG;
+    switch (get_funct3(inst) | (get_funct7(inst) << 3))
+    {
+    #define GEN_ITEM(bits, exu, exop) case bits: instinfo->exetype = exu; instinfo->exeop = static_cast<ExeOPType>(exop); break
+    GEN_ITEM(0b0000000000, ExeType::ALU, ALUOPType::ADDW);
+    GEN_ITEM(0b0100000000, ExeType::ALU, ALUOPType::SUBW);
+    GEN_ITEM(0b0000000001, ExeType::ALU, ALUOPType::SLLW);
+    GEN_ITEM(0b0000000101, ExeType::ALU, ALUOPType::SRLW);
+    GEN_ITEM(0b0100000101, ExeType::ALU, ALUOPType::SRAW);
+    GEN_ITEM(0b0000001000, ExeType::MUL, MULOPType::MULW);
+    GEN_ITEM(0b0000001100, ExeType::DIV, DIVOPType::DIVW);
+    GEN_ITEM(0b0000001101, ExeType::DIV, DIVOPType::DIVUW);
+    GEN_ITEM(0b0000001110, ExeType::DIV, DIVOPType::REMW);
+    GEN_ITEM(0b0000001111, ExeType::DIV, DIVOPType::REMUW);
+    default: return false;
+    #undef GEN_ITEM
+    }
+    return true;
+}
+
+/**
+ * A Extension
+ */
+inline bool _decode_amo(InstT inst, InstInfo *instinfo) {
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::IREG;
+    instinfo->desttype = DestType::IREG;
+    instinfo->exetype = ExeType::AMO;
+    switch ((get_funct7(inst) >> 2) | (get_funct3(inst) << 5))
+    {
+    case static_cast<ExeOPType>(AMOOPType::ADD_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::ADD_W); break;
+    case static_cast<ExeOPType>(AMOOPType::SWAP_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::SWAP_W); break;
+    case static_cast<ExeOPType>(AMOOPType::LR_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::LR_W); break;
+    case static_cast<ExeOPType>(AMOOPType::SC_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::SC_W); break;
+    case static_cast<ExeOPType>(AMOOPType::XOR_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::XOR_W); break;
+    case static_cast<ExeOPType>(AMOOPType::AND_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::AND_W); break;
+    case static_cast<ExeOPType>(AMOOPType::OR_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::OR_W); break;
+    case static_cast<ExeOPType>(AMOOPType::MIN_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MIN_W); break;
+    case static_cast<ExeOPType>(AMOOPType::MAX_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MAX_W); break;
+    case static_cast<ExeOPType>(AMOOPType::MINU_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MINU_W); break;
+    case static_cast<ExeOPType>(AMOOPType::MAXU_W) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MAXU_W); break;
+    case static_cast<ExeOPType>(AMOOPType::ADD_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::ADD_D); break;
+    case static_cast<ExeOPType>(AMOOPType::SWAP_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::SWAP_D); break;
+    case static_cast<ExeOPType>(AMOOPType::LR_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::LR_D); break;
+    case static_cast<ExeOPType>(AMOOPType::SC_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::SC_D); break;
+    case static_cast<ExeOPType>(AMOOPType::XOR_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::XOR_D); break;
+    case static_cast<ExeOPType>(AMOOPType::AND_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::AND_D); break;
+    case static_cast<ExeOPType>(AMOOPType::OR_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::OR_D); break;
+    case static_cast<ExeOPType>(AMOOPType::MIN_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MIN_D); break;
+    case static_cast<ExeOPType>(AMOOPType::MAX_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MAX_D); break;
+    case static_cast<ExeOPType>(AMOOPType::MINU_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MINU_D); break;
+    case static_cast<ExeOPType>(AMOOPType::MAXU_D) : instinfo->exeop = static_cast<ExeOPType>(AMOOPType::MAXU_D); break;
+    default: return false;
+    }
+    return true;
+}
+
+/**
+ * I Extension
+ * Zicsr Extension
+ */
+bool _decode_system(InstT inst, InstInfo *instinfo) {
+    instinfo->exetype = ExeType::CSR;
+    switch (inst)
+    {
+    case 0x00000073U: instinfo->exeop = static_cast<ExeOPType>(CSROPType::ECALL); return true;
+    case 0x00100073U: instinfo->exeop = static_cast<ExeOPType>(CSROPType::EBREAK); return true;
+    case 0x10200073U: instinfo->exeop = static_cast<ExeOPType>(CSROPType::SRET); return true;
+    case 0x30200073U: instinfo->exeop = static_cast<ExeOPType>(CSROPType::MRET); return true;
+    case 0x10500073U: instinfo->exeop = static_cast<ExeOPType>(CSROPType::WFI); return true;
+    }
+
+    if (get_funct7(inst) == 0b0001001) { // sfence.vma
+        instinfo->exetype = ExeType::FENCE;
+        instinfo->exeop = static_cast<ExeOPType>(FENCEOPType::SFENCE);
+        instinfo->rs1 = get_rs1(inst);
+        instinfo->rs2 = get_rs2(inst);
+        instinfo->srctype1 = SrcType::IREG;
+        instinfo->srctype2 = SrcType::IREG;
+        if (instinfo->rs1) instinfo->exeop |= FENCEOP_SFENCE_VA_VALID_MASK;
+        if (instinfo->rs2) instinfo->exeop |= FENCEOP_SFENCE_ASID_VALID_MASK;
+        return true;
+    }
+
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_rs1(inst);
+    instinfo->desttype = DestType::IREG;
+    instinfo->srctype1 = (get_funct3(inst) > 4)?SrcType::IMM:SrcType::IREG;
+    instinfo->exeop = get_funct7(inst) << 8;
+    switch (get_funct3(inst))
+    {
+    case 0b001: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RW); return true;
+    case 0b010: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RS); return true;
+    case 0b011: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RC); return true;
+    case 0b101: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RWI); return true;
+    case 0b110: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RSI); return true;
+    case 0b111: instinfo->exeop |= static_cast<ExeOPType>(CSROPType::RCI); return true;
+    }
+    return false;
+}
+
+/**
+ * I Extension
+ * Zifencei Extension
+ */
+bool _decode_miscmem(InstT inst, InstInfo *instinfo) {
+    instinfo->exetype = ExeType::FENCE;
+    switch (inst)
+    {
+    case 0x8330000fU: instinfo->exeop = static_cast<ExeOPType>(FENCEOPType::FENCETSO); return true;
+    case 0x0100000fU: instinfo->exeop = static_cast<ExeOPType>(FENCEOPType::PAUSE); return true;
+    }
+
+    switch (get_funct3(inst))
+    {
+    case 0b000:
+        instinfo->exeop = static_cast<ExeOPType>(FENCEOPType::FENCE) | (((inst >> 20) & 0xff) << 8);
+        return true;
+    case 0b001:
+        instinfo->exeop = static_cast<ExeOPType>(FENCEOPType::FENCEI);
+        return true;
+    }
+    
+}
+
+bool decode_inst(InstCT inst, InstInfo *instinfo) {
+
+    /* C Extension */
+    if ((inst & 3) != 3) return decode_rvc_inst(inst, instinfo);
+
+    memset(instinfo, 0, sizeof(InstInfo));
+
+    OPCode opcode = static_cast<OPCode>(get_opcode(inst));
+    instinfo->opcode = opcode;
+
+    switch (opcode) {
+    case OPCode::load:     return _decode_load(inst, instinfo);
+    case OPCode::store:    return _decode_store(inst, instinfo);
+    case OPCode::lui:      return _decode_lui(inst, instinfo);
+    case OPCode::opimm:    return _decode_opimm(inst, instinfo);
+    case OPCode::opimm32:  return _decode_opimm32(inst, instinfo);
+    case OPCode::op:       return _decode_op(inst, instinfo);
+    case OPCode::op32:     return _decode_op32(inst, instinfo);
+    case OPCode::auipc:    return _decode_auipc(inst, instinfo);
+    case OPCode::jal:      return _decode_jal(inst, instinfo);
+    case OPCode::jalr:     return _decode_jalr(inst, instinfo);
+    case OPCode::amo:      return _decode_amo(inst, instinfo);
+    case OPCode::miscmem:  return _decode_miscmem(inst, instinfo);
+    case OPCode::system:   return _decode_system(inst, instinfo);
+    default:               return false;
+    }
+
+}
 
 
 

@@ -221,6 +221,7 @@ typedef struct {
 
 } InstInfo;
 
+bool decode_inst(InstCT inst, InstInfo *instinfo);
 bool decode_rvc_inst(InstCT inst, InstInfo *instinfo);
 
 

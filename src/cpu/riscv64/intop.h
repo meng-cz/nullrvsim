@@ -40,13 +40,8 @@ enum class ALUOPType : uint32_t {
     ADDW    = 0x010,
     SUBW    = 0x110,
     SLLW    = 0x011,
-    SLTW    = 0x012,
-    SLTUW   = 0x013,
-    XORW    = 0x014,
     SRLW    = 0x015,
     SRAW    = 0x115,
-    ORW     = 0x016,
-    ANDW    = 0x017,
 };
 
 uint64_t perform_alu_op(ALUOPType optype, uint64_t s1, uint64_t s2);
@@ -106,6 +101,9 @@ enum class JUMPOPType : uint32_t {
     JALR    = 0x2,
 };
 
+/**
+ * csr_idx at [15:8]
+ */
 enum class CSROPType : uint32_t {
     RW      = 0x01,
     RS      = 0x02,
@@ -125,13 +123,28 @@ enum class CSROPType : uint32_t {
     WRSSTO  = 0x21,
 };
 
+const uint32_t CSROP_MASK = 0x00ff;
+const uint32_t CSROP_CSR_MASK = 0xff00;
+
+/**
+ * pred, succ at [15:8]
+ * for sfence: 8: rs1 valid, 9: rs2 valid
+ */
 enum class FENCEOPType : uint32_t {
     FENCE       = 0x00,
     FENCEI      = 0x01,
     SFENCE      = 0x02,
+    FENCETSO    = 0x03,
+    PAUSE       = 0x04,
     /* H Extension */
     HFENCEG     = 0x10,
     HFENCEV     = 0x11,
 };
+
+const uint32_t FENCEOP_MASK = 0x00ff;
+const uint32_t FENCEOP_PRED_MASK = 0xf000;
+const uint32_t FENCEOP_SUCC_MASK = 0x0f00;
+const uint32_t FENCEOP_SFENCE_VA_VALID_MASK = 0x0100;
+const uint32_t FENCEOP_SFENCE_ASID_VALID_MASK = 0x0200;
 
 } 
