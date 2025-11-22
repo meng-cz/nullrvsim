@@ -17,6 +17,8 @@
 
 #include "test/test_scc.hpp"
 
+#include "float/floatop.h"
+
 #define TEST(x) printf("Execute: %s\n", #x); if(!x) printf("Test %s failed\n", #x);
 
 #define OPERATION(op, name, statement) do{if(op.compare(name)==0) { { statement } return;}}while(0)
@@ -145,6 +147,12 @@ void execution() {
         TEST(launch::mp_scc_l1l2(W));
     });
 
+
+    // -------- Soft Float Test --------
+    
+    OPERATION(op, "test_fp16", {
+        TEST(test_fp16());
+    });
 
     // -------- Simulator Test --------
 

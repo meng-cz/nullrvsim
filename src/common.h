@@ -181,6 +181,18 @@ inline uint32_t pop_count(T n) {
 }
 
 template<typename T>
+inline uint32_t count_highest_bitpos_1begin(T n) {
+    uint32_t cnt = 0;
+    if (n == 0) return 0;
+    while (n) {
+        n = (n >> 1);
+        cnt++;
+    }
+    return cnt;
+}
+
+
+template<typename T>
 inline void unpack_bit_position(T n, std::vector<uint32_t> *out) {
     out->clear();
     uint32_t cnt = 0;
