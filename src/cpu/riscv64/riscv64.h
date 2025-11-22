@@ -134,7 +134,7 @@ enum class OPCode {
 };
 
 enum class SrcType : uint8_t {
-    ZERO,
+    ZERO = 0,
     IMM,
     PC,
     IREG,
@@ -144,7 +144,7 @@ enum class SrcType : uint8_t {
 };
 
 enum class DestType : uint8_t {
-    NONE,
+    NONE = 0,
     IREG,
     FREG,
     VREG,
@@ -203,8 +203,6 @@ typedef struct {
     InstT rawinst;
 
     OPCode opcode;
-    uint8_t funct3;
-    uint8_t funct7;
 
     DestType desttype;
     SrcType srctype1;
@@ -223,7 +221,7 @@ typedef struct {
 
 } InstInfo;
 
-
+bool decode_rvc_inst(InstCT inst, InstInfo *instinfo);
 
 
 } // namespace riscv64

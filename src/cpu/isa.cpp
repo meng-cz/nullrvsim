@@ -337,7 +337,6 @@ bool decode_rv64c(RVInstT raw, RV64InstDecoded *dec) {
             uimm |= (GET_BITS_AT(raw, 7, 4) << 6);
             uimm |= (((raw >> 11) & 1) << 4);
             uimm |= (((raw >> 12) & 1) << 5);
-            if((uimm >> 10) & 1) uimm |= 0xfffffffffffffe00UL;
             dec->imm = uimm;
             dec->param.intop = RV64IntOP73::ADD;
             dec->flag |= (RVINSTFLAG_RDINT | RVINSTFLAG_S1INT);
