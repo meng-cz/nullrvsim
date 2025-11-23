@@ -77,7 +77,6 @@ enum class LOADOPType : uint32_t {
     LBU     = 0x4,
     LHU     = 0x5,
     LWU     = 0x6,
-    LQ      = 0x8,
 };
 
 enum class STOREOPType : uint32_t {
@@ -85,7 +84,6 @@ enum class STOREOPType : uint32_t {
     SH      = 0x1,
     SW      = 0x2,
     SD      = 0x3,
-    SQ      = 0x8,
 };
 
 enum class BRANCHOPType : uint32_t {

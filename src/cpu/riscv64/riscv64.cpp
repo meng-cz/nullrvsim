@@ -432,7 +432,7 @@ bool _decode_miscmem(InstT inst, InstInfo *instinfo) {
  * F/D/Q/Zfh Extension
  */
 bool _decode_loadfp(InstT inst, InstInfo *instinfo) {
-    instinfo->exetype = ExeType::LOAD;
+    instinfo->exetype = ExeType::FLOAD;
     instinfo->rd = get_rd(inst);
     instinfo->rs1 = get_rs1(inst);
     instinfo->imm = get_imm_I(inst);
@@ -440,10 +440,10 @@ bool _decode_loadfp(InstT inst, InstInfo *instinfo) {
     instinfo->srctype1 = SrcType::IREG;
     switch (get_funct3(inst))
     {
-    case 0b001: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LH); return true;
-    case 0b010: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LW); return true;
-    case 0b011: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LD); return true;
-    case 0b100: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LQ); return true;
+    case 0b001: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLH); return true;
+    case 0b010: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLW); return true;
+    case 0b011: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLD); return true;
+    case 0b100: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLQ); return true;
     }
     return false;
 }
@@ -452,7 +452,7 @@ bool _decode_loadfp(InstT inst, InstInfo *instinfo) {
  * F/D/Q/Zfh Extension
  */
 bool _decode_storefp(InstT inst, InstInfo *instinfo) {
-    instinfo->exetype = ExeType::STORE;
+    instinfo->exetype = ExeType::FSTORE;
     instinfo->rs1 = get_rs1(inst);
     instinfo->rs2 = get_rs2(inst);
     instinfo->imm = get_imm_S(inst);
@@ -460,10 +460,10 @@ bool _decode_storefp(InstT inst, InstInfo *instinfo) {
     instinfo->srctype2 = SrcType::FREG;
     switch (get_funct3(inst))
     {
-    case 0b001: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SH); return true;
-    case 0b010: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SW); return true;
-    case 0b011: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SD); return true;
-    case 0b100: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SQ); return true;
+    case 0b001: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSH); return true;
+    case 0b010: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSW); return true;
+    case 0b011: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSD); return true;
+    case 0b100: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSQ); return true;
     }
     return false;
 }

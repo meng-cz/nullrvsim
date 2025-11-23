@@ -27,6 +27,20 @@
 
 namespace riscv64 {
 
+enum class FLOADOPType : uint32_t {
+    FLH     = 0x1,
+    FLW     = 0x2,
+    FLD     = 0x3,
+    FLQ     = 0x4,
+};
+
+enum class FSTOREOPType : uint32_t {
+    FSH     = 0x1,
+    FSW     = 0x2,
+    FSD     = 0x3,
+    FSQ     = 0x4,
+};
+
 enum class FFlags : uint32_t {
     NONE        = 0U,
     INEXACT     = 1U << 0,

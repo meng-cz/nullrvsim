@@ -163,6 +163,8 @@ enum class ExeType : uint32_t {
     /* A Extension */
     AMO,    // lr, sc, amoadd, ..., _d, _w
     /* F/D/Q/Zfh Extension */
+    FLOAD,  // fld, flw, ...
+    FSTORE, // fsd, fsw, ...
     FALU,   // fadd, fsub, fmin, fsgnj
     FCVT,   // fcvt2f
     FCMP,   // fcmp
