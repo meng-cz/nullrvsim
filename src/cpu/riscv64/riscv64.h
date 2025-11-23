@@ -195,6 +195,8 @@ enum class ExeType : uint32_t {
     VMOVE,
     I2V,
     F2V,
+    /* Invalid */
+    INVALID
 };
 
 typedef uint32_t ExeOPType;

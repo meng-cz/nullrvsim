@@ -23,6 +23,7 @@
 #include "riscv64.h"
 #include "intop.h"
 #include "amoop.h"
+#include "fpop.h"
 
 namespace riscv64 {
 
@@ -405,6 +406,7 @@ bool _decode_system(InstT inst, InstInfo *instinfo) {
 /**
  * I Extension
  * Zifencei Extension
+ * Zihintpause Extension
  */
 bool _decode_miscmem(InstT inst, InstInfo *instinfo) {
     instinfo->exetype = ExeType::FENCE;
@@ -425,6 +427,105 @@ bool _decode_miscmem(InstT inst, InstInfo *instinfo) {
     }
     
 }
+
+/**
+ * F/D/Q/Zfh Extension
+ */
+bool _decode_loadfp(InstT inst, InstInfo *instinfo) {
+    instinfo->exetype = ExeType::LOAD;
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->imm = get_imm_I(inst);
+    instinfo->desttype = DestType::FREG;
+    instinfo->srctype1 = SrcType::IREG;
+    switch (get_funct3(inst))
+    {
+    case 0b001: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LH); return true;
+    case 0b010: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LW); return true;
+    case 0b011: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LD); return true;
+    case 0b100: instinfo->exeop = static_cast<ExeOPType>(LOADOPType::LQ); return true;
+    }
+    return false;
+}
+
+/**
+ * F/D/Q/Zfh Extension
+ */
+bool _decode_storefp(InstT inst, InstInfo *instinfo) {
+    instinfo->exetype = ExeType::STORE;
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->imm = get_imm_S(inst);
+    instinfo->srctype1 = SrcType::IREG;
+    instinfo->srctype2 = SrcType::FREG;
+    switch (get_funct3(inst))
+    {
+    case 0b001: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SH); return true;
+    case 0b010: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SW); return true;
+    case 0b011: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SD); return true;
+    case 0b100: instinfo->exeop = static_cast<ExeOPType>(STOREOPType::SQ); return true;
+    }
+    return false;
+}
+
+/**
+ * F/D/Q/Zfh Extension
+ */
+bool _decode_fpop(InstT inst, InstInfo *instinfo) {
+    ExeOPType fpu_optype = fp_generate_optype(inst);
+    instinfo->exetype = fp_detect_exe_type(fp_extract_optype_op5(fpu_optype));
+    instinfo->exeop = fpu_optype;
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    switch (instinfo->exetype)
+    {
+    case ExeType::FALU:
+    case ExeType::FMUL:
+    case ExeType::FDIV:
+        instinfo->srctype1 = SrcType::FREG;
+        instinfo->srctype2 = SrcType::FREG;
+        instinfo->desttype = DestType::FREG;
+        return true;
+    case ExeType::FCVT:
+    case ExeType::FSQRT:
+        instinfo->srctype1 = SrcType::FREG;
+        instinfo->desttype = DestType::FREG;
+        return true;
+    case ExeType::FCMP:
+        instinfo->srctype1 = SrcType::FREG;
+        instinfo->srctype2 = SrcType::FREG;
+        instinfo->desttype = DestType::IREG;
+        return true;
+    case ExeType::I2F:
+        instinfo->srctype1 = SrcType::IREG;
+        instinfo->desttype = DestType::FREG;
+        return true;
+    case ExeType::F2I:
+        instinfo->srctype1 = SrcType::FREG;
+        instinfo->desttype = DestType::IREG;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * F/D/Q/Zfh Extension
+ */
+bool _decode_fma(InstT inst, InstInfo *instinfo) {
+    instinfo->exetype = ExeType::FMA;
+    instinfo->exeop = fma_generate_optype(inst);
+    instinfo->rd = get_rd(inst);
+    instinfo->rs1 = get_rs1(inst);
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->rs3 = get_rs3(inst);
+    instinfo->srctype1 = SrcType::FREG;
+    instinfo->srctype2 = SrcType::FREG;
+    instinfo->srctype3 = SrcType::FREG;
+    instinfo->desttype = DestType::FREG;
+    return true;
+}
+
 
 bool decode_inst(InstCT inst, InstInfo *instinfo) {
 
@@ -450,6 +551,13 @@ bool decode_inst(InstCT inst, InstInfo *instinfo) {
     case OPCode::amo:      return _decode_amo(inst, instinfo);
     case OPCode::miscmem:  return _decode_miscmem(inst, instinfo);
     case OPCode::system:   return _decode_system(inst, instinfo);
+    case OPCode::loadfp:   return _decode_loadfp(inst, instinfo);
+    case OPCode::storefp:  return _decode_storefp(inst, instinfo);
+    case OPCode::opfp:     return _decode_fpop(inst, instinfo);
+    case OPCode::madd:
+    case OPCode::msub:
+    case OPCode::nmsub:
+    case OPCode::nmadd:    return _decode_fma(inst, instinfo);
     default:               return false;
     }
 

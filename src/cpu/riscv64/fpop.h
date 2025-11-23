@@ -91,7 +91,7 @@ inline ExeType fp_detect_exe_type(FPOP5 fpop) {
     case FPOP5::CVTI2F: return ExeType::I2F;
     case FPOP5::MVF2I: return ExeType::F2I;
     case FPOP5::MVI2F: return ExeType::I2F;
-    default: return ExeType::FALU;
+    default: return ExeType::INVALID;
     }
 }
 
