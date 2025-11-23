@@ -24,6 +24,7 @@
 #include "intop.h"
 #include "amoop.h"
 #include "fpop.h"
+#include "vecop.h"
 
 namespace riscv64 {
 
@@ -426,44 +427,93 @@ bool _decode_miscmem(InstT inst, InstInfo *instinfo) {
         return true;
     }
     
+    return false;
 }
 
 /**
  * F/D/Q/Zfh Extension
+ * V Extension
  */
 bool _decode_loadfp(InstT inst, InstInfo *instinfo) {
-    instinfo->exetype = ExeType::FLOAD;
+    uint8_t funct3 = get_funct3(inst);
+    if (funct3 >= 0b001 && funct3 <= 0b100) {
+        instinfo->exetype = ExeType::FLOAD;
+        instinfo->rd = get_rd(inst);
+        instinfo->rs1 = get_rs1(inst);
+        instinfo->imm = get_imm_I(inst);
+        instinfo->desttype = DestType::FREG;
+        instinfo->srctype1 = SrcType::IREG;
+        switch (get_funct3(inst))
+        {
+        case 0b001: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLH); return true;
+        case 0b010: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLW); return true;
+        case 0b011: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLD); return true;
+        case 0b100: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLQ); return true;
+        }
+        return false;
+    }
+    // Vec load
+    instinfo->exetype = ExeType::VLOAD;
+    instinfo->exeop = static_cast<ExeOPType>(vec_ls_generate_optype(inst));
     instinfo->rd = get_rd(inst);
     instinfo->rs1 = get_rs1(inst);
-    instinfo->imm = get_imm_I(inst);
-    instinfo->desttype = DestType::FREG;
+    instinfo->rs2 = get_rs2(inst);
+    instinfo->desttype = DestType::VREG;
     instinfo->srctype1 = SrcType::IREG;
-    switch (get_funct3(inst))
+    switch (static_cast<VLSMop>(vec_ls_extract_mop(instinfo->exeop)))
     {
-    case 0b001: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLH); return true;
-    case 0b010: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLW); return true;
-    case 0b011: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLD); return true;
-    case 0b100: instinfo->exeop = static_cast<ExeOPType>(FLOADOPType::FLQ); return true;
+    case VLSMop::UnitStride: return true;
+    case VLSMop::Strided:
+        instinfo->srctype2 = SrcType::IREG;
+        return true;
+    case VLSMop::IndexedOrdered:
+    case VLSMop::IndexedUnordered:
+        instinfo->srctype2 = SrcType::VREG;
+        return true;
     }
     return false;
 }
 
 /**
  * F/D/Q/Zfh Extension
+ * V Extension
  */
 bool _decode_storefp(InstT inst, InstInfo *instinfo) {
-    instinfo->exetype = ExeType::FSTORE;
+    uint8_t funct3 = get_funct3(inst);
+        if (funct3 >= 0b001 && funct3 <= 0b100) {
+        instinfo->exetype = ExeType::FSTORE;
+        instinfo->rs1 = get_rs1(inst);
+        instinfo->rs2 = get_rs2(inst);
+        instinfo->imm = get_imm_S(inst);
+        instinfo->srctype1 = SrcType::IREG;
+        instinfo->srctype2 = SrcType::FREG;
+        switch (get_funct3(inst))
+        {
+        case 0b001: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSH); return true;
+        case 0b010: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSW); return true;
+        case 0b011: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSD); return true;
+        case 0b100: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSQ); return true;
+        }
+        return false;
+    }
+    // Vec store
+    instinfo->exetype = ExeType::VSTORE;
+    instinfo->exeop = static_cast<ExeOPType>(vec_ls_generate_optype(inst));
     instinfo->rs1 = get_rs1(inst);
     instinfo->rs2 = get_rs2(inst);
-    instinfo->imm = get_imm_S(inst);
+    instinfo->rs3 = get_rd(inst);
     instinfo->srctype1 = SrcType::IREG;
-    instinfo->srctype2 = SrcType::FREG;
-    switch (get_funct3(inst))
+    instinfo->srctype3 = SrcType::VREG;
+    switch (static_cast<VLSMop>(vec_ls_extract_mop(instinfo->exeop)))
     {
-    case 0b001: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSH); return true;
-    case 0b010: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSW); return true;
-    case 0b011: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSD); return true;
-    case 0b100: instinfo->exeop = static_cast<ExeOPType>(FSTOREOPType::FSQ); return true;
+    case VLSMop::UnitStride: return true;
+    case VLSMop::Strided:
+        instinfo->srctype2 = SrcType::IREG;
+        return true;
+    case VLSMop::IndexedOrdered:
+    case VLSMop::IndexedUnordered:
+        instinfo->srctype2 = SrcType::VREG;
+        return true;
     }
     return false;
 }
@@ -561,6 +611,7 @@ bool decode_inst(InstCT inst, InstInfo *instinfo) {
     default:               return false;
     }
 
+    return false;
 }
 
 
