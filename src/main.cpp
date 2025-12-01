@@ -40,6 +40,7 @@
 #include "test/test_scc.hpp"
 
 #include "float/floatop.h"
+#include "utils/uint.hpp"
 
 #define TEST(x) printf("Execute: %s\n", #x); if(!x) printf("Test %s failed\n", #x);
 
@@ -175,6 +176,12 @@ void execution() {
     OPERATION(op, "test_fp16", {
         TEST(test_fp16());
     });
+
+    // -------- Utils Test --------
+    OPERATION(op, "test_utils", {
+        TEST(_test_uint());
+    });
+
 
     // -------- Simulator Test --------
 

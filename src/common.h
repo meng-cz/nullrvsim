@@ -64,6 +64,15 @@ using std::make_shared;
 using std::make_unique;
 using std::make_pair;
 
+#if defined(__GNUC__) || defined(__clang__)
+#define FORCE_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define FORCE_INLINE __forceinline
+#else
+#define FORCE_INLINE inline
+#endif
+
+
 typedef __int128_t int128_t;
 typedef __uint128_t uint128_t;
 
@@ -201,16 +210,16 @@ class PCG32Random {
 public:
     PCG32Random() { state = rand();}
     inline uint32_t rand() {
-        uint32_t oldstate = state;
+        uint64_t oldstate = state;
         // Advance internal state
-        state = oldstate * 747796405u + 2891336453u;
+        state = oldstate * 6364136223846793005ULL + 1442695040888963407ULL;
         // Calculate output function (XSH RR), uses old state for max ILP
-        uint32_t xorshifted = ((oldstate >> 18u) ^ oldstate) >> 27u;
-        uint32_t rot = oldstate >> 59u;
+        uint32_t xorshifted = (uint32_t)(((oldstate >> 18u) ^ oldstate) >> 27u);
+        uint32_t rot = (uint32_t)(oldstate >> 59u);
         return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
     }
 protected:
-    uint32_t state;
+    uint64_t state;
 };
 
 #define CEIL_DIV(x,y) (((x) + (y) - 1) / (y))
