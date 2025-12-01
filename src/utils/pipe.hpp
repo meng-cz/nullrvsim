@@ -43,8 +43,8 @@ public:
     inline void push(const DataT &data) {
         _input_buffer = data;
     }
-    inline DataT &top() {
-        return _output_buffer;
+    inline void top(DataT *data) {
+        *data = _output_buffer;
     }
 
     inline void apply_next_tick() {
@@ -53,6 +53,37 @@ public:
 protected:
     DataT _input_buffer;
     DataT _output_buffer;
+};
+
+template<typename DataT>
+class SimpleStageValidPipe {
+public:
+    inline ValidData<DataT> &get_input_buffer() {
+        return _input_buffer;
+    }
+    inline ValidData<DataT> &get_output_buffer() {
+        return _output_buffer;
+    }
+
+    inline void keep() {
+        _input_buffer.valid = true;
+    }
+    inline void push(const DataT &data) {
+        _input_buffer.data = data;
+        _input_buffer.valid = true;
+    }
+    inline bool top(DataT *data) {
+        *data = _output_buffer.data;
+        return _output_buffer.valid;
+    }
+
+    inline void apply_next_tick() {
+        _output_buffer = _input_buffer;
+        _input_buffer.valid = false;
+    }
+protected:
+    ValidData<DataT> _input_buffer;
+    ValidData<DataT> _output_buffer;
 };
 
 template <typename T>

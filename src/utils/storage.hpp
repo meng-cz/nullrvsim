@@ -131,3 +131,55 @@ protected:
     std::vector<StorageNext<T>> data;
 };
 
+template <typename TagT, typename DataT, uint32_t Size>
+class TaggedArrayStorageNext {
+public:
+
+    bool match(TagT tag, DataT *out, uint32_t *idxout) {
+        auto iter = tag2idx.find(tag);
+        if (iter != tag2idx.end()) {
+            uint32_t idx = iter->second;
+            *out = datas[idx];
+            *idxout = idx;
+            return true;
+        }
+        return false;
+    }
+
+    bool full() {
+        return (tag2idx.size() >= Size);
+    }
+
+    void get(uint32_t idx, TagT *tagout, DataT *dataout) {
+        *tagout = tags[idx];
+        *dataout = datas[idx];
+    }
+
+    void setnext(uint32_t idx, TagT &tag, DataT &data) {
+        toBeSetEntries.push_back({idx, tag, data});
+    }
+
+    inline void apply_next_tick() {
+        for (auto &entry : toBeSetEntries) {
+            TagT old_tag = tags[entry.index];
+            tag2idx.erase(old_tag);
+            tags[entry.index] = entry.tag;
+            datas[entry.index] = entry.data;
+            tag2idx[entry.tag] = entry.index;
+        }
+        toBeSetEntries.clear();
+    }
+
+protected:
+    std::array<TagT, Size> tags;
+    std::array<DataT, Size> datas;
+    std::unordered_map<TagT, uint32_t> tag2idx;
+
+    typedef struct {
+        uint32_t index;
+        TagT tag;
+        DataT data;
+    } ToBeSetEntry;
+    std::vector<ToBeSetEntry> toBeSetEntries;
+};
+

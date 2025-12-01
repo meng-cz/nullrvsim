@@ -26,13 +26,6 @@
 #include "common.h"
 #include "spinlocks.h"
 
-template <typename T>
-class ValidData {
-public:
-    bool valid = false;
-    T data;
-};
-
 /**
  * 延迟1周期写入的列表结构
  * 每周期最多向列表中写入input_width项，写入的项会在下一周期进入主列表

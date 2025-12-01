@@ -47,6 +47,7 @@
 #include "spinlocks.h"
 #include "easylogging++.h"
 
+using std::array;
 using std::vector;
 using std::list;
 using std::unordered_map;
@@ -77,6 +78,12 @@ static_assert(sizeof(int16_t) == 2, "sizeof(int16_t) == 2");
 static_assert(sizeof(uint8_t) == 1, "sizeof(uint8_t) == 1");
 static_assert(sizeof(int8_t) == 1, "sizeof(int8_t) == 1");
 
+typedef struct {
+    uint64_t v0;
+    uint64_t v1;
+    uint64_t v2;
+    uint64_t v3;
+} uint256_t;
 
 typedef uint64_t RawDataT;
 typedef RawDataT IntDataT;
@@ -93,6 +100,14 @@ typedef union {
     float       f32;
 } __internal_data_t;
 #define RAW_DATA_AS(data) (*((__internal_data_t*)(&(data))))
+
+template <typename T>
+class ValidData {
+public:
+    bool valid = false;
+    T data;
+};
+
 
 
 typedef uint64_t SizeT;
@@ -182,6 +197,22 @@ inline uint64_t rand_long() {
     return ((uint64_t)rand() | ((uint64_t)rand() << 32UL));
 }
 
+class PCG32Random {
+public:
+    PCG32Random() { state = rand();}
+    inline uint32_t rand() {
+        uint32_t oldstate = state;
+        // Advance internal state
+        state = oldstate * 747796405u + 2891336453u;
+        // Calculate output function (XSH RR), uses old state for max ILP
+        uint32_t xorshifted = ((oldstate >> 18u) ^ oldstate) >> 27u;
+        uint32_t rot = oldstate >> 59u;
+        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+    }
+protected:
+    uint32_t state;
+};
+
 #define CEIL_DIV(x,y) (((x) + (y) - 1) / (y))
 #define ALIGN(x,y) ((y)*CEIL_DIV((x),(y)))
 #define BOEQ(a, b) ((!(a))==(!(b)))
@@ -193,6 +224,14 @@ inline uint64_t get_current_time_us()
     struct timespec cur_time;
     clock_gettime(CLOCK_REALTIME, &cur_time);
     return ( cur_time.tv_sec * 1000*1000 + cur_time.tv_nsec / 1000);
+}
+
+template<typename T, uint32_t BitPos, uint32_t BitLen>
+inline T extract_bits(T n) {
+    static_assert(BitLen > 0, "BitLen > 0");
+    static_assert(BitLen <= (sizeof(T)*8), "BitLen <= (sizeof(T)*8)");
+    static_assert((BitPos + BitLen) <= (sizeof(T)*8), "(BitPos + BitLen) <= (sizeof(T)*8)");
+    return ((n >> BitPos) & (( ((T)1) << BitLen) - ((T)1)));
 }
 
 template<typename T>
