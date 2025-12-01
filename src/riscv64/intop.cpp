@@ -73,21 +73,6 @@ uint64_t perform_alu_op(ALUOPType optype, uint64_t s1, uint64_t s2) {
 			int32_t sr = v << sh;
 			return static_cast<uint64_t>(static_cast<int64_t>(sr));
 		}
-		case ALUOPType::SLTW: {
-			int32_t a = static_cast<int32_t>(static_cast<uint32_t>(s1));
-			int32_t b = static_cast<int32_t>(static_cast<uint32_t>(s2));
-			return (a < b) ? 1ULL : 0ULL;
-		}
-		case ALUOPType::SLTUW: {
-			uint32_t a = static_cast<uint32_t>(s1);
-			uint32_t b = static_cast<uint32_t>(s2);
-			return (a < b) ? 1ULL : 0ULL;
-		}
-		case ALUOPType::XORW: {
-			uint32_t r = static_cast<uint32_t>(s1) ^ static_cast<uint32_t>(s2);
-			int32_t sr = static_cast<int32_t>(r);
-			return static_cast<uint64_t>(static_cast<int64_t>(sr));
-		}
 		case ALUOPType::SRLW: {
 			uint32_t v = static_cast<uint32_t>(s1);
 			unsigned sh = static_cast<unsigned>(s2 & 0x1fU);
@@ -100,16 +85,6 @@ uint64_t perform_alu_op(ALUOPType optype, uint64_t s1, uint64_t s2) {
 			unsigned sh = static_cast<unsigned>(s2 & 0x1fU);
 			int32_t r = v >> sh; // arithmetic on 32-bit
 			return static_cast<uint64_t>(static_cast<int64_t>(r));
-		}
-		case ALUOPType::ORW: {
-			uint32_t r = static_cast<uint32_t>(s1) | static_cast<uint32_t>(s2);
-			int32_t sr = static_cast<int32_t>(r);
-			return static_cast<uint64_t>(static_cast<int64_t>(sr));
-		}
-		case ALUOPType::ANDW: {
-			uint32_t r = static_cast<uint32_t>(s1) & static_cast<uint32_t>(s2);
-			int32_t sr = static_cast<int32_t>(r);
-			return static_cast<uint64_t>(static_cast<int64_t>(sr));
 		}
 
 		default:
