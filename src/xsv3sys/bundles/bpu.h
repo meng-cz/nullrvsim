@@ -25,6 +25,7 @@
 #include "common.h"
 #include "utils/saturate.hpp"
 #include "utils/bitvec.hpp"
+#include "utils/uint.hpp"
 
 #include "xsv3sys/configs/configs.h"
 
@@ -67,24 +68,24 @@ enum class BranchAttribute : uint8_t {
     OtherIndirect = 7
 };
 
-typedef uint256_t GhrHistoryT;
+typedef UInt<BranchHistoryWidth> HistoryT;
 
 // ---------------------------- Main BTB Meta ---------------------------- //
 
 typedef struct {
-    bool            rawHit;
-    CfiPosT         position;
+    VirtAddrT       target;
     BranchAttribute attribute;
+    CfiPosT         position;
 } MainBtbMetaEntry;
 
 typedef struct {
-    MainBtbMetaEntry entries[NumBtbResultEntries];
+    MainBtbMetaEntry entries[ResolveEntryBranchNumber];
 } MainBtbMeta;
 
 // ---------------------------- TAGE Meta ---------------------------- //
 
 typedef struct {
-    SaturateCounter8<1U << BaseTableTakenCtrWidth> takenCtrs[FetchBlockInstNum];
+    SaturateCounter8<1U << TageBaseTableTakenCtrWidth> takenCtrs[FetchBlockInstNum];
 } TageMeta;
 
 // ---------------------------- RAS Meta ---------------------------- //
@@ -113,7 +114,7 @@ static_assert(ScNumWays <= 16, "ScNumWays <= 16");
 typedef struct {
     ScEntry         scPathResp[PathTableSize][ScNumWays];
     ScEntry         scGlobalResp[GlobalTableSize][ScNumWays];
-    GhrHistoryT     scGhr;
+    HistoryT        scGhr;
     BitVec16        scPred;
     BitVec16        useScPred;
 } ScMeta;
@@ -140,9 +141,9 @@ typedef struct {
 // ---------------------------- GHR Meta ---------------------------- //
 
 typedef struct {
-    GhrHistoryT     ghr;
+    HistoryT        ghr;
     BitVec16        hitMask;
-    CfiPosT         position[NumBtbResultEntries];
+    CfiPosT         position[ResolveEntryBranchNumber];
 } GhrMeta;
 
 // ---------------------------- BPU ---------------------------- //
@@ -220,6 +221,33 @@ typedef struct {
     RasMeta             rasMeta;
 } BPUCommit;
 
+
+template <uint32_t foldedLen, uint32_t histLen, uint32_t I, uint32_t N>
+FORCE_INLINE uint32_t __constexpr_loop_foldHistory(const UInt<histLen> &hist) {
+    if constexpr (I < N - 1) {
+        uint32_t v = hist.extract<(I + 1) * foldedLen - 1, I * foldedLen>().value;
+        return v ^ __constexpr_loop_foldHistory<foldedLen, histLen, I + 1, N>(hist);
+    } else if constexpr (I == N - 1) {
+        static_assert(histLen > I * foldedLen);
+        return hist.extract<histLen - 1, I * foldedLen>().value;
+    } else {
+        return 0;
+    }
+}
+
+template <uint32_t foldedLen, uint32_t histLen>
+FORCE_INLINE uint32_t foldHistory(const UInt<histLen> &hist) {
+    static_assert(foldedLen <= 32);
+    static_assert(foldedLen > 0);
+    static_assert(histLen <= 512);
+    static_assert(histLen > 0);
+    if constexpr (foldedLen >= histLen) {
+        return hist.value;
+    } else {
+        constexpr uint32_t ROUND = CEIL_DIV(histLen, foldedLen);
+        return __constexpr_loop_foldHistory<foldedLen, histLen, 0, ROUND>(hist);
+    }
+}
 
 } // namespace xsv3sys
 

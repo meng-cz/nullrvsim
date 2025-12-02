@@ -28,6 +28,7 @@
 #include "utils/replacer.hpp"
 
 #include "xsv3sys/bundles/bpu.h"
+#include "xsv3sys/configs/configs.h"
 
 namespace xsv3sys {
 namespace bpu {
@@ -36,14 +37,6 @@ constexpr uint32_t MbtbNumSet = (MbtbNumEntries / MbtbNumWay);
 constexpr uint32_t MbtbSetIdxLen = std::__countr_zero<uint32_t>(MbtbNumSet);
 
 typedef struct {
-    VirtAddrT           target;
-    BranchAttribute     attribute;
-    CfiPosT             cfiPosition;
-    bool                hit;
-} BtbInfo;
-
-typedef struct {
-    BtbInfo         result[NumBtbResultEntries];
     MainBtbMeta     meta;
     bool            valid;
 } MainBTBPrediction;
@@ -60,12 +53,14 @@ typedef struct {
 
     inline void on_current_tick() {
         _tick_s1ToS2();
+        _tick_t1TrainToBtb();
     }
     inline void apply_next_tick() {
         btbBlock.apply_next_tick();
         replacer.apply_next_tick();
         s1_reg.apply_next_tick();
         s2_reg.apply_next_tick();
+        t1_reg.apply_next_tick();
     }
 
     inline void s0SetVaddr(VirtAddrT vaddr) {
@@ -73,15 +68,14 @@ typedef struct {
         s1Reg.valid = true;
         s1Reg.data = vaddr;
         btbBlock.readReq(0, getSetIdx(vaddr));
-        for (uint32_t i = 1; i < MbtbNumAlignBanks; i++) {
-            VirtAddrT bankVaddr = vaddr + (i << FetchBlockAlignWidth);
-            if ((vaddr >> PAGE_ADDR_OFFSET) == (bankVaddr >> PAGE_ADDR_OFFSET)) {
-                btbBlock.readReq(i, getSetIdx(bankVaddr));
-            }
-        }
     }
     inline void t0Train(BPUTrain &train) {
-
+        auto &t1Reg = t1_reg.get_input_buffer();
+        t1Reg.valid = true;
+        t1Reg.data.startVaddr = train.startVaddr;
+        for (uint32_t i = 0; i < ResolveEntryBranchNumber; i++) {
+            t1Reg.data.branchs[i] = train.branchs[i];
+        }
     }
 
     inline void s2GetPredict(MainBTBPrediction *info) {
@@ -93,31 +87,8 @@ typedef struct {
         }
         VirtAddrT vaddr = s2regData.vaddr;
         info->valid = true;
-        for (uint32_t i = 0; i < MbtbNumAlignBanks; i++) {
-            VirtAddrT bankVaddr = vaddr + (i << FetchBlockAlignWidth);
-            bool isCrossPage = ((vaddr >> PAGE_ADDR_OFFSET) != (bankVaddr >> PAGE_ADDR_OFFSET));
-            for (uint32_t j = 0; j < MbtbNumWay; j++) {
-                auto &entry = s2regData.entries[i][j];
-                if (isCrossPage || !entry.valid) {
-                    info->result[i].hit = false;
-                    info->meta.entries[i].rawHit = false;
-                    continue;
-                }
-                uint32_t entryTag = getTag(bankVaddr);
-                if (entry.tag == entryTag) {
-                    info->result[i].hit = true;
-                    info->result[i].target = entry.target;
-                    info->result[i].attribute = entry.attribute;
-                    info->result[i].cfiPosition = entry.position;
-                    info->meta.entries[i].rawHit = true;
-                    info->meta.entries[i].position = entry.position;
-                    info->meta.entries[i].attribute = entry.attribute;
-                }
-                else {
-                    info->result[i].hit = false;
-                    info->meta.entries[i].rawHit = false;
-                }
-            }
+        for (uint32_t i = 0; i < ResolveEntryBranchNumber; i++) {
+            info->meta.entries[i] = s2regData.entry.entries[i];
         }
     }
 
@@ -127,18 +98,16 @@ private:
     ConstructorParams params;
 
     inline uint64_t getSetIdx(VirtAddrT vaddr) {
-        return extract_bits<VirtAddrT, FetchBlockAlignWidth, MbtbSetIdxLen>(vaddr);
+        return extract_bits<VirtAddrT, 1, MbtbSetIdxLen>(vaddr);
     }
     inline uint32_t getTag(VirtAddrT vaddr) {
-        return extract_bits<VirtAddrT, (FetchBlockAlignWidth + MbtbSetIdxLen), MbtbTagWidth>(vaddr);
+        return extract_bits<VirtAddrT, (1 + MbtbSetIdxLen), MbtbTagWidth>(vaddr);
     }
 
     typedef struct {
-        VirtAddrT       target;
-        uint32_t        tag;
-        BranchAttribute attribute;
-        CfiPosT         position;
-        bool            valid;
+        MainBtbMetaEntry    entries[ResolveEntryBranchNumber];
+        uint32_t            tag;
+        bool                valid;
     } MbtbEntry;
 
     BlockRamRDFirst<array<MbtbEntry, MbtbNumWay>, MbtbSetIdxLen, 2, 1> btbBlock;
@@ -147,7 +116,7 @@ private:
     SimpleStageValidPipe<VirtAddrT> s1_reg;
 
     typedef struct {
-        array<MbtbEntry, MbtbNumWay>    entries[MbtbNumAlignBanks];
+        MbtbEntry       entry;
         VirtAddrT       vaddr;
     } S2Reg;
 
@@ -163,20 +132,67 @@ private:
         auto &s2RegData = s2Reg.data;
         s2Reg.valid = true;
         s2RegData.vaddr = vaddr;
-        btbBlock.readResp(0, &s2RegData.entries[0]);
-        for (uint32_t i = 1; i < MbtbNumAlignBanks; i++) {
-            VirtAddrT bankVaddr = vaddr + (i << FetchBlockAlignWidth);
-            if ((vaddr >> PAGE_ADDR_OFFSET) == (bankVaddr >> PAGE_ADDR_OFFSET)) {
-                btbBlock.readResp(i, &s2RegData.entries[i]);
+
+        array<MbtbEntry, MbtbNumWay> line;
+        btbBlock.readResp(0, &line);
+        for (uint32_t i = 0; i < MbtbNumWay; i++) {
+            if (line[i].valid && (line[i].tag == getTag(vaddr))) {
+                s2RegData.entry = line[i];
+                return;
             }
         }
     }
 
     typedef struct {
-        MainBtbMeta             meta;
         ValidData<BranchInfo>   branchs[ResolveEntryBranchNumber];
         VirtAddrT               startVaddr;
     } T1Reg;
+
+    SimpleStageValidPipe<T1Reg> t1_reg;
+
+    inline void _tick_t1TrainToBtb() {
+        auto &t1Reg = t1_reg.get_output_buffer();
+        if (!t1Reg.valid) {
+            return;
+        }
+        VirtAddrT vaddr = t1Reg.data.startVaddr;
+        uint64_t setIdx = getSetIdx(vaddr);
+        array<MbtbEntry, MbtbNumWay> line;
+        btbBlock.readResp(1, &line);
+
+        // find victim
+        uint32_t victimWay = MbtbNumWay;
+        for (uint32_t i = 0; i < MbtbNumWay; i++) {
+            if (!line[i].valid) {
+                victimWay = i;
+                break;
+            }
+        }
+        if (victimWay == MbtbNumWay) {
+            victimWay = replacer.victim(setIdx);
+        }
+
+        // prepare new entry
+        MbtbEntry &newEntry = line[victimWay];
+        newEntry.tag = getTag(vaddr);
+        newEntry.valid = false;
+        for (uint32_t i = 0; i < ResolveEntryBranchNumber; i++) {
+            if (t1Reg.data.branchs[i].valid) {
+                newEntry.entries[i].target = t1Reg.data.branchs[i].data.target;
+                newEntry.entries[i].attribute = t1Reg.data.branchs[i].data.attribute;
+                newEntry.entries[i].position = t1Reg.data.branchs[i].data.cfiPosition;
+                newEntry.valid = true;
+            } else {
+                newEntry.entries[i].target = 0;
+                newEntry.entries[i].attribute = BranchAttribute::None;
+                newEntry.entries[i].position = 0;
+            }
+        }
+
+        // write back
+        btbBlock.writeReq(0, setIdx, line);
+        replacer.touch(setIdx, victimWay);
+    }
 
 };
 
