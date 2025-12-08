@@ -36,9 +36,11 @@ public:
     }
 
     inline void writeReq(uint32_t portidx, uint64_t addr, DataT &data) {
-        toBeWritens[portidx].valid = true;
-        toBeWritens[portidx].data.addr = addr;
-        toBeWritens[portidx].data.data = data;
+        toBeWritens[portidx].addr = addr & ((1UL << AddrWidth) - 1UL);
+        toBeWritens[portidx].data = data;
+        if constexpr (WRWidth == 1) {
+            toBeWritens[portidx].valid = true;
+        }
     }
 
     inline void apply_next_tick() {
@@ -46,20 +48,32 @@ public:
             readDatas[i] = datas[toBeReadAddrs[i]];
         }
         for (uint32_t i = 0; i < WRWidth; i++) {
-            if (toBeWritens[i].valid) {
-                datas[toBeWritens[i].data.addr] = toBeWritens[i].data.data;
+            if constexpr (WRWidth == 1) {
+                if (!toBeWritens[i].valid) {
+                    continue;
+                }
+                datas[toBeWritens[i].addr] = toBeWritens[i].data;
+                toBeWritens[i].valid = false;
+            } else {
+                datas[toBeWritens[i].addr] = toBeWritens[i].data;
+                toBeWritens[i].addr = (1UL << AddrWidth);  // invalidate
             }
-            toBeWritens[i].valid = false;
         }
     }
 
 protected:
-    std::array<DataT, 1UL << AddrWidth> datas;
+    std::array<DataT, (1UL << AddrWidth) + 1> datas;
     typedef struct {
-        uint64_t addr;
+        uint64_t addr = (1UL << AddrWidth);
         DataT data;
     } ToBeWriten;
-    std::array<ValidData<ToBeWriten>, WRWidth> toBeWritens;
+    typedef struct {
+        uint64_t addr = 0;
+        DataT data;
+        bool valid = false;
+    } ToBeWritenV;
+    using WRType = std::conditional_t<WRWidth == 1, ToBeWritenV, ToBeWriten>;
+    std::array<WRType, WRWidth> toBeWritens;
     std::array<uint64_t, RDWidth> toBeReadAddrs;
     std::array<DataT, RDWidth> readDatas;
 };
