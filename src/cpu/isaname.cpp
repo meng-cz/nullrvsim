@@ -35,6 +35,18 @@ void init_rv64_inst_name_str(RV64InstDecoded *inst) {
     }
     if(inst->flag & RVINSTFLAG_RVC) ret += "C.";
     switch (inst->opcode) {
+    case RV64OPCode::matrix:
+        switch (inst->mat_uop) {
+        case MatUOP::MAT_LOAD_A:  ret += "mlae8"; break;
+        case MatUOP::MAT_LOAD_B:  ret += "mlbe8"; break;
+        case MatUOP::MAT_STORE_C: ret += "msce32"; break;
+        case MatUOP::MAT_MACC:    ret += "mmacc.w.b"; break;
+        case MatUOP::MAT_ZERO:    ret += "mzero"; break;
+        case MatUOP::MAT_RELEASE: ret += "mrelease"; break;
+        default: ret += "unknown_mat"; break;
+        }
+        ret += " ";
+        break;
     case RV64OPCode::load:
         switch (inst->param.loadstore) {
         case RV64LSWidth::byte: ret += "LB "; break;

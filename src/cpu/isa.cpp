@@ -317,6 +317,66 @@ bool decode_rv64(RVInstT raw, RV64InstDecoded *dec) {
         else if(raw == 0x00100073) dec->flag |= RVINSTFLAG_EBREAK;
         else dec->flag |= (RVINSTFLAG_RDINT | RVINSTFLAG_S1INT);
     }
+
+    else if(op == RV64OPCode::matrix) {
+        // 提取各字段
+        uint32_t func4   = GET_BITS_AT(raw, 28, 4);
+        uint32_t uop     = GET_BITS_AT(raw, 26, 2);
+        uint32_t size_sup= GET_BITS_AT(raw, 23, 3);
+        uint32_t s_size  = GET_BITS_AT(raw, 18, 2);
+        uint32_t d_size  = GET_BITS_AT(raw, 10, 2);
+        uint32_t md      = GET_BITS_AT(raw, 7,  3);
+        uint32_t ms1     = GET_BITS_AT(raw, 15, 3);
+        uint32_t ms2     = GET_BITS_AT(raw, 20, 3);
+        uint32_t rs2     = GET_BITS_AT(raw, 20, 5);
+        uint32_t rs1     = GET_BITS_AT(raw, 15, 5);
+        uint32_t funct3  = GET_BITS_AT(raw, 12, 3);
+        uint32_t imm3    = GET_BITS_AT(raw, 23, 3); // 用于 mzero 等
+        
+        dec->param.mat.func4   = func4;
+        dec->param.mat.uop     = uop;
+        dec->param.mat.size_sup= size_sup;
+        dec->param.mat.s_size  = s_size;
+        dec->param.mat.d_size  = d_size;
+        dec->param.mat.md      = md;
+        dec->param.mat.ms1     = ms1;
+        dec->param.mat.ms2     = ms2;
+        
+        // 根据 func4+uop+funct3 区分具体指令
+        if(func4 == 0x0 && uop == 0x1 && funct3 == 0x0) { // load A
+            if(!simcpu::matrix::is_tile_reg(md)) return false;
+            dec->mat_uop = MatUOP::MAT_LOAD_A;
+            dec->rs1 = rs1; dec->rs2 = rs2;
+            dec->param.mat.md = md;
+        } else if(func4 == 0x1 && uop == 0x1 && funct3 == 0x0) { // load B
+            if(!simcpu::matrix::is_tile_reg(md)) return false;
+            dec->mat_uop = MatUOP::MAT_LOAD_B;
+            dec->rs1 = rs1; dec->rs2 = rs2;
+            dec->param.mat.md = md;
+        } else if(func4 == 0x2 && uop == 0x1 && funct3 == 0x0) { // store C
+            if(!simcpu::matrix::is_acc_reg(md)) return false;
+            dec->mat_uop = MatUOP::MAT_STORE_C;
+            dec->rs1 = rs1; dec->rs2 = rs2;
+            dec->param.mat.md = md;
+        } else if(func4 == 0x1 && uop == 0x2 && funct3 == 0x0 && (size_sup & 3) == 0x3) { // mmacc.w.b
+            if(!simcpu::matrix::is_acc_reg(md) || !simcpu::matrix::is_tile_reg(ms1) || !simcpu::matrix::is_tile_reg(ms2)) return false;
+            dec->mat_uop = MatUOP::MAT_MACC;
+            dec->param.mat.md  = md;
+            dec->param.mat.ms1 = ms1;
+            dec->param.mat.ms2 = ms2;
+        } else if(func4 == 0x0 && uop == 0x3 && funct3 == 0x0 && imm3 == 0x0) { // mzero
+            if(!simcpu::matrix::is_tile_reg(md) && !simcpu::matrix::is_acc_reg(md)) return false;
+            dec->mat_uop = MatUOP::MAT_ZERO;
+            dec->param.mat.md = md;
+        } else if(func4 == 0x0 && uop == 0x0 && funct3 == 0x0) { // mrelease
+            dec->mat_uop = MatUOP::MAT_RELEASE;
+            // mrelease 不需要寄存器索引
+        } else {
+            return false; // 未知矩阵指令
+        }
+        dec->flag |= (RVINSTFLAG_MATRIX | RVINSTFLAG_UNIQUE);
+    }
+
     else {
         return false;
     }
