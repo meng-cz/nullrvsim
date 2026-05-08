@@ -26,6 +26,7 @@
 #include "common.h"
 
 #include "amo.h"
+#include "cpu/matrix.h"
 
 typedef uint32_t RVInstT;
 typedef uint16_t RVCInstT;
@@ -102,6 +103,16 @@ namespace isa {
 #define RV_REG_ft9  (29)
 #define RV_REG_ft10 (30)
 #define RV_REG_ft11 (31)
+
+#define MAT_TR0    simcpu::matrix::MAT_TR0
+#define MAT_TR1    simcpu::matrix::MAT_TR1
+#define MAT_TR2    simcpu::matrix::MAT_TR2
+#define MAT_TR3    simcpu::matrix::MAT_TR3
+#define MAT_ACC0   simcpu::matrix::MAT_ACC0
+#define MAT_ACC1   simcpu::matrix::MAT_ACC1
+#define MAT_ACC2   simcpu::matrix::MAT_ACC2
+#define MAT_ACC3   simcpu::matrix::MAT_ACC3
+
 
 char** ireg_names();
 
@@ -184,6 +195,7 @@ enum class RV64OPCode {
     jalr    = 0x67,
     jal     = 0x6f,
     system  = 0x73,
+    matrix  = 0x2b,
     nop     = 0
 };
 
@@ -251,6 +263,16 @@ enum class RV64FPOP5 {
     MVF2I   = 0x1c,
     MVI2F   = 0x1e,
 };
+
+enum class MatUOP {
+    MAT_LOAD_A,
+    MAT_LOAD_B,
+    MAT_STORE_C,
+    MAT_MACC,
+    MAT_ZERO,
+    MAT_RELEASE
+};
+
 
 inline bool rv64_fpop_is_i_rd(RV64FPOP5 op) {
     return ((op == RV64FPOP5::CMP) || (op == RV64FPOP5::CVTF2I) || (op == RV64FPOP5::MVF2I));
@@ -360,6 +382,7 @@ typedef uint64_t RVInstFlagT;
 #define RVINSTFLAG_S3FP     (1 << 21)
 #define RVINSTFLAG_RDINT    (1 << 22)
 #define RVINSTFLAG_RDFP     (1 << 23)
+#define RVINSTFLAG_MATRIX   (1 << 24)
 
 typedef union {
     RV64LSWidth     loadstore;
@@ -368,6 +391,18 @@ typedef union {
     RV64AMOParam    amo;
     RV64FPParam     fp;
     RV64CSRParam    csr;
+
+    struct {
+        uint8_t func4;   // inst[31:28]
+        uint8_t uop;     // inst[27:26]
+        uint8_t md;      // dest matrix reg (inst[9:7])
+        uint8_t ms1;     // src1 matrix reg (inst[17:15])
+        uint8_t ms2;     // src2 matrix reg (inst[22:20])
+        uint8_t s_size;  // inst[19:18]
+        uint8_t d_size;  // inst[11:10]
+        uint8_t size_sup;// inst[25:23]
+    } mat;
+
 } RV64InstParam;
 
 typedef struct {
@@ -381,6 +416,7 @@ typedef struct {
     RVRegIndexT rs3;
     RVRegIndexT rd;
     IntDataT imm;
+    MatUOP mat_uop = MatUOP::MAT_RELEASE;
 
     RVInstFlagT flag;
 

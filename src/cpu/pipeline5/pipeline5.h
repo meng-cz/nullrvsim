@@ -28,6 +28,7 @@
 
 #include "cpu/cpuinterface.h"
 #include "cpu/isa.h"
+#include "cpu/matrix.h"
 
 #include "cache/cacheinterface.h"
 
@@ -136,6 +137,9 @@ public:
     VirtAddrT debug_get_pc() {return pc;}
 
 protected:
+
+
+    matrix::MatrixState matrix_state;
 
     bool is_halt = false;
 

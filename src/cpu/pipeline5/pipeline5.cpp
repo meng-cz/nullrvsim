@@ -59,6 +59,7 @@ void PipeLine5CPU::init_all() {
         log_file_ldst = new std::ofstream(log_buf);
     }
 
+    matrix_state.clear();
     clear_pipeline();
 }
 
@@ -231,6 +232,10 @@ void PipeLine5CPU::process_pipeline_2_decode() {
         dec.opcode == RV64OPCode::amo
     );
 
+    if(dec.opcode == RV64OPCode::matrix) {
+        p5dec.passp4 = false;
+    }
+
     p5dec.err = SimError::success;
 
     p5dec.mem_start_tick = p5dec.mem_finish_tick = 0;
@@ -271,6 +276,15 @@ void PipeLine5CPU::process_pipeline_3_execute() {
     else if(inst.opcode == RV64OPCode::lui) {
         p5inst.arg0 = inst.imm;
         iregs.block(rd1);
+    }
+    else if(inst.opcode == RV64OPCode::matrix) {
+        if(inst.mat_uop == isa::MatUOP::MAT_LOAD_A ||
+            inst.mat_uop == isa::MatUOP::MAT_LOAD_B ||
+            inst.mat_uop == isa::MatUOP::MAT_STORE_C) {
+            if(iregs.blocked(rs1) || iregs.blocked(rs2)) return;
+            p5inst.arg0 = iregs.getu(rs1);
+            p5inst.arg1 = iregs.getu(rs2);
+        }
     }
     else if(inst.opcode == RV64OPCode::jal) {
         p5inst.arg1 = inst.pc + RAW_DATA_AS(inst.imm).i64;
@@ -633,6 +647,98 @@ void PipeLine5CPU::process_pipeline_4_memory() {
             log_file_ldst->write(log_buf, strlen(log_buf));
         }
     }
+    else if(inst.opcode == RV64OPCode::matrix) {
+        SimError res = SimError::success;
+        if(inst.mat_uop == isa::MatUOP::MAT_ZERO) {
+            res = matrix_state.zero(inst.param.mat.md);
+        }
+        else if(inst.mat_uop == isa::MatUOP::MAT_RELEASE) {
+            res = matrix_state.release();
+        }
+        else if(inst.mat_uop == isa::MatUOP::MAT_MACC) {
+            res = matrix_state.macc_w_b(inst.param.mat.md, inst.param.mat.ms1, inst.param.mat.ms2);
+        }
+        else if(inst.mat_uop == isa::MatUOP::MAT_LOAD_A || inst.mat_uop == isa::MatUOP::MAT_LOAD_B) {
+            matrix::TileReg tile = {};
+            VirtAddrT base = p5inst.arg0;
+            uint64_t stride = p5inst.arg1;
+            uint8_t md = inst.param.mat.md;
+            int rows = (inst.mat_uop == isa::MatUOP::MAT_LOAD_A) ? matrix::MAT_M : matrix::MAT_N;
+
+            for(int i = 0; i < rows; i++) {
+                for(int j = 0; j < matrix::MAT_K; j++) {
+                    VirtAddrT vaddr = base + i * stride + j;
+                    PhysAddrT paddr = vaddr;
+                    uint8_t byte = 0;
+                    p5inst.vaddr = vaddr;
+                    if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
+                        io_sys_port->dev_input(cpu_id, vaddr, 1, &byte);
+                    }
+                    else {
+                        res = trans(vaddr, &paddr, PGFLAG_R);
+                        if(res != SimError::success) {
+                            p5inst.arg0 = vaddr;
+                            p5inst.err = res;
+                            p4_result.second = p4_workload.second;
+                            p4_result.first = true;
+                            return;
+                        }
+                        res = io_dcache_port->load(paddr, 1, &byte, false);
+                        cache_operation_result_check_error(res, inst.pc, vaddr, paddr, 1);
+                        if(res != SimError::success) {
+                            p5inst.cache_missed = true;
+                            return;
+                        }
+                    }
+                    tile[i][j] = byte;
+                }
+            }
+            res = matrix_state.write_tile(md, tile);
+        }
+        else if(inst.mat_uop == isa::MatUOP::MAT_STORE_C) {
+            matrix::AccReg acc = {};
+            VirtAddrT base = p5inst.arg0;
+            uint64_t stride = p5inst.arg1;
+            uint8_t ms3 = inst.param.mat.md;
+            res = matrix_state.read_acc(ms3, acc);
+            if(res == SimError::success) {
+                for(int i = 0; i < matrix::MAT_M; i++) {
+                    for(int j = 0; j < matrix::MAT_N; j++) {
+                        VirtAddrT vaddr = base + i * stride + j * sizeof(int32_t);
+                        PhysAddrT paddr = vaddr;
+                        int32_t value = acc[i][j];
+                        p5inst.vaddr = vaddr;
+                        if(io_sys_port->is_dev_mem(cpu_id, vaddr)) {
+                            io_sys_port->dev_output(cpu_id, vaddr, sizeof(int32_t), &value);
+                        }
+                        else {
+                            res = trans(vaddr, &paddr, PGFLAG_W);
+                            if(res != SimError::success) {
+                                p5inst.arg0 = vaddr;
+                                p5inst.err = res;
+                                p4_result.second = p4_workload.second;
+                                p4_result.first = true;
+                                return;
+                            }
+                            res = io_dcache_port->store(paddr, sizeof(int32_t), &value, false);
+                            cache_operation_result_check_error(res, inst.pc, vaddr, paddr, sizeof(int32_t));
+                            if(res != SimError::success) {
+                                p5inst.cache_missed = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if(res != SimError::success) {
+            p5inst.err = res;
+        }
+        p4_result.second = p4_workload.second;
+        p4_result.first = true;
+        return;
+    }
+
     // Todo
         
     p4_result.second = p4_workload.second;
@@ -693,6 +799,13 @@ void PipeLine5CPU::process_pipeline_5_commit() {
             simroot_assert(0);
         }
     }
+
+
+    if (inst.opcode == RV64OPCode::matrix) {
+        p5_result.first = true;
+        return;
+    }
+
 
     if(inst.opcode == RV64OPCode::lui) {
         iregs.sets(inst.rd, RAW_DATA_AS(inst.imm).i64);
